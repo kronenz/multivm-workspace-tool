@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Multi-VM AI Agent Workspace Tool"
 authors = ["you"]
 edition = "2021"
+default-run = "multivm-workspace-tool"
 
 [lib]
 name = "multivm_workspace_tool_lib"
