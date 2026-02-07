@@ -13,7 +13,13 @@
       <aside id="sidebar">
         <div class="sidebar-header">
           <h2>Worksets</h2>
-          <button id="btn-new-workset" class="btn btn-primary btn-sm">+ New</button>
+          <div class="sidebar-header-actions">
+            <button id="btn-theme-toggle" class="theme-toggle" type="button" title="Toggle theme" aria-label="Toggle theme">
+              <span class="theme-toggle-icon" aria-hidden="true"></span>
+              <span class="theme-toggle-text" id="theme-toggle-text">Dark</span>
+            </button>
+            <button id="btn-new-workset" class="btn btn-primary btn-sm">+ New</button>
+          </div>
         </div>
         <input id="workset-search" type="text" placeholder="Search worksets..." />
         <div id="workset-list"></div>

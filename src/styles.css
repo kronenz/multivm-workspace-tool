@@ -26,12 +26,36 @@
   --border-focus: #00d4ff;
   --sidebar-width: 260px;
   --panel-width: 380px;
+  --terminal-bg: #000;
+  --pane-status-bg: rgba(0, 0, 0, 0.6);
+  --code-block-bg: #0b0b12;
+  --code-inline-bg: rgba(0, 0, 0, 0.35);
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 10px;
   --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.3);
   --transition-fast: 150ms ease;
   --transition-normal: 200ms ease;
+}
+
+:root[data-theme='light'] {
+  --bg-primary: #f2f4fb;
+  --bg-secondary: #ffffff;
+  --bg-card: #ffffff;
+  --bg-input: #edf0f7;
+  --text-primary: #1c1c28;
+  --text-secondary: #4a4a5a;
+  --text-dim: #7a7a8c;
+  --accent: #005fcc;
+  --accent-hover: #004da5;
+  --accent-muted: rgba(0, 95, 204, 0.12);
+  --border: rgba(0, 0, 0, 0.14);
+  --border-focus: #005fcc;
+  --terminal-bg: #f7f7fb;
+  --pane-status-bg: rgba(255, 255, 255, 0.72);
+  --code-block-bg: #f0f2f6;
+  --code-inline-bg: rgba(0, 0, 0, 0.06);
+  --shadow-card: 0 2px 10px rgba(0, 0, 0, 0.12);
 }
 
 html, body {
@@ -72,6 +96,46 @@ html, body {
   justify-content: space-between;
   padding: 16px 14px 10px;
   border-bottom: 1px solid var(--border);
+}
+
+.sidebar-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.theme-toggle:hover {
+  background: var(--bg-card);
+  border-color: var(--text-dim);
+  color: var(--text-primary);
+}
+
+.theme-toggle-icon {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-muted);
+}
+
+.theme-toggle-text {
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .sidebar-header h2 {
@@ -834,7 +898,7 @@ html, body {
 .grid-pane {
   position: relative;
   overflow: hidden;
-  background: #000;
+  background: var(--terminal-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   min-height: 0;
@@ -865,7 +929,7 @@ html, body {
   display: flex;
   align-items: center;
   padding: 0 8px;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--pane-status-bg);
   z-index: 10;
   font-family: 'JetBrains Mono', Menlo, Monaco, Consolas, 'Courier New', monospace;
 }
@@ -1059,15 +1123,15 @@ html, body {
 
 .markdown-body code {
   font-family: 'JetBrains Mono', Menlo, Monaco, Consolas, 'Courier New', monospace;
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--code-inline-bg);
+  border: 1px solid var(--border);
   padding: 1px 5px;
   border-radius: var(--radius-sm);
 }
 
 .markdown-body pre {
-  background: #0b0b12;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--code-block-bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 10px 12px;
   overflow: auto;

@@ -1,10 +1,12 @@
 mod workset;
 mod ssh;
+mod settings;
 
 use serde::Serialize;
 use uuid::Uuid;
 use workset::{AuthMethod, CreateWorksetInput, UpdateWorksetInput, Workset, WorksetStore, WorksetSummary};
 use ssh::{FileEntry, ReadFileResult, SshConnectionManager, SshSessionConfig};
+use settings::{AppSettings, SettingsStore};
 
 // ── Return type for activate_workset ──
 
@@ -51,6 +53,19 @@ fn update_workset(
 #[tauri::command]
 fn delete_workset(id: String, store: tauri::State<'_, WorksetStore>) -> Result<bool, String> {
     Ok(store.delete(&id))
+}
+
+// ── Settings Commands ──
+
+#[tauri::command]
+fn get_settings(store: tauri::State<'_, SettingsStore>) -> AppSettings {
+    store.get()
+}
+
+#[tauri::command]
+fn set_theme(theme: String, store: tauri::State<'_, SettingsStore>) -> Result<AppSettings, String> {
+    let parsed = SettingsStore::parse_theme(&theme).map_err(|e| e.to_string())?;
+    store.set_theme_result(parsed).map_err(|e| e.to_string())
 }
 
 // ── New SSH Terminal Commands ──
@@ -193,6 +208,7 @@ async fn read_file(
 pub fn run() {
     tauri::Builder::default()
         .manage(WorksetStore::new())
+        .manage(SettingsStore::new())
         .manage(SshConnectionManager::new())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
@@ -201,6 +217,8 @@ pub fn run() {
             create_workset,
             update_workset,
             delete_workset,
+            get_settings,
+            set_theme,
             activate_workset,
             deactivate_workset,
             terminal_input,

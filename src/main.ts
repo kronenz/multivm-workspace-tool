@@ -7,6 +7,7 @@ import type { PaneState } from './workspace.ts';
 import { createWorkspace, attachTerminal, destroyWorkspace, getActivePaneIndex, setPaneHostLabel, writeToPaneBuffer, updatePaneStatus } from './workspace.ts';
 import { FileBrowser, type FileEntry } from './file_browser.ts';
 import { installMarkdownLinkHandler, renderMarkdownToHtml } from './markdown.ts';
+import { applyTerminalTheme, type ThemeName } from './terminal.ts';
 
 interface WorksetSummary {
   id: string;
@@ -65,6 +66,10 @@ interface ReadFileResult {
   truncated: boolean;
 }
 
+interface AppSettings {
+  theme: ThemeName;
+}
+
 interface ResourceSnapshot {
   cpu_percent: number | null;
   ram_percent: number | null;
@@ -98,6 +103,8 @@ let mdContentEl: HTMLElement | null = null;
 let mdPathEl: HTMLElement | null = null;
 let mdNoteEl: HTMLElement | null = null;
 let panelInitialized = false;
+
+let currentTheme: ThemeName = 'dark';
 
 function $(id: string): HTMLElement {
   const el = document.getElementById(id);
@@ -145,6 +152,48 @@ function showToast(message: string, type: "success" | "error"): void {
   toastTimer = setTimeout(() => {
     toast!.classList.remove("visible");
   }, 3000);
+}
+
+// ── Theme (MVP Feature 10) ──
+
+function applyTheme(theme: ThemeName): void {
+  currentTheme = theme;
+  document.documentElement.dataset.theme = theme;
+
+  const label = document.getElementById('theme-toggle-text');
+  if (label) {
+    label.textContent = theme === 'light' ? 'Light' : 'Dark';
+  }
+
+  if (activeWorkspace) {
+    for (const pane of activeWorkspace.panes) {
+      if (pane.terminal) {
+        applyTerminalTheme(pane.terminal, theme);
+      }
+    }
+  }
+}
+
+async function initTheme(): Promise<void> {
+  try {
+    const settings = await invoke<AppSettings>('get_settings');
+    const theme = settings?.theme === 'light' ? 'light' : 'dark';
+    applyTheme(theme);
+  } catch {
+    applyTheme('dark');
+  }
+
+  const btn = document.getElementById('btn-theme-toggle');
+  btn?.addEventListener('click', async () => {
+    const next: ThemeName = currentTheme === 'dark' ? 'light' : 'dark';
+    try {
+      const updated = await invoke<AppSettings>('set_theme', { theme: next });
+      const applied: ThemeName = updated?.theme === 'light' ? 'light' : 'dark';
+      applyTheme(applied);
+    } catch (err) {
+      showToast(`Failed to set theme: ${String(err)}`, 'error');
+    }
+  });
 }
 
 // ── Resource Bar (MVP Feature 7) ──
@@ -1050,6 +1099,10 @@ async function handleActivateWorkset(worksetId: string): Promise<void> {
       const conn = workset.connections[i];
       setPaneHostLabel(panes[i], `${conn.user}@${conn.host}:${conn.port}`);
       attachTerminal(panes[i]);
+      const inst = panes[i].terminal;
+      if (inst) {
+        applyTerminalTheme(inst, currentTheme);
+      }
     }
 
     // Store workspace state
@@ -1199,6 +1252,7 @@ function wireSearch(): void {
 window.addEventListener("DOMContentLoaded", () => {
   loadWorksets();
   wireSearch();
+  void initTheme();
 
   getCurrentWindow().onCloseRequested(async () => {
     if (activeWorkspace) {
