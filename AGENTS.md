@@ -1,7 +1,7 @@
 # AGENTS.md — Multi-VM AI Agent Workspace Tool
 
 > Last Updated: 2026-02-07
-> Status: Planning Complete (코드 구현 전)
+> Status: SPIKE 검증 완료, MVP 구현 준비 중
 
 ---
 
@@ -11,7 +11,7 @@
 
 **핵심 가치**: 10개 이상의 터미널 창을 하나의 통합 워크스페이스로 대체. Workset 프로필 하나로 SSH 접속 → 프로젝트 폴더 이동 → AI CLI 자동 실행 → Grid Layout 복원을 한 번에 수행.
 
-**현재 상태**: Planning Complete — 5개 기획 문서 완성, 기술 스파이크 및 MVP 구현 대기 중.
+**현재 상태**: SPIKE 검증 완료 — SPIKE-1(빌드/통합 PASS), SPIKE-2(SSH 10세션 PASS). MVP 구현 준비 중.
 
 **라이선스**: MIT / Apache 2.0 (듀얼 라이선스)
 

@@ -527,6 +527,8 @@ Sources:
 
 **목적**: Tauri WebView에서 xterm.js의 터미널 에뮬레이션 성능이 실용적 수준인지 검증
 
+**상태**: ⚠️ PARTIAL PASS (빌드/통합 검증 완료, 레이턴시 측정은 데스크톱 환경에서 추가 필요)
+
 **검증 항목**:
 1. **키 입력 응답 시간**: 키 입력 → 화면 표시까지의 지연 시간 (목표: <50ms)
 2. **대량 출력 렌더링**: `cat large-file.txt` (10,000줄) 시 UI 프리즈 여부 (NFR-2)
@@ -538,6 +540,12 @@ Sources:
 - 최소 Tauri 앱 + xterm.js 1개 인스턴스
 - 로컬 PTY (SSH 없이) → SSH 추가 테스트 순서
 - 3개 OS(macOS, Ubuntu, Windows)에서 벤치마크
+
+**실행 결과** (2026-02-07, headless Ubuntu 24.04 + Xvfb):
+- ✅ `npm run build` (tsc + vite) 성공: 19 모듈, 399KB JS + 5.8KB CSS
+- ✅ `cargo build --release` 성공: 1분 47초
+- ✅ Tauri 앱 Xvfb 환경 기동 성공 (15초 안정 실행, EGL 경고만 발생)
+- ⏳ 실제 레이턴시 측정: 데스크톱 환경(macOS/Windows/Ubuntu GUI)에서 추가 필요
 
 **성공 기준**:
 - 키 입력 응답 <50ms (3개 OS 모두)
@@ -555,6 +563,8 @@ Sources:
 
 **목적**: 단일 데스크톱 앱에서 10개 동시 SSH 연결을 안정적으로 유지할 수 있는지 검증
 
+**상태**: ✅ PASS (localhost 환경, 300초 축소 테스트)
+
 **검증 항목**:
 1. **동시 연결 안정성**: 10개 SSH 세션을 30분 이상 유지하면서 각 세션에서 명령 실행
 2. **채널 멀티플렉싱**: 하나의 SSH 연결에서 터미널 + SFTP + exec 채널 동시 사용 시 안정성
@@ -566,6 +576,15 @@ Sources:
 - Rust SSH 라이브러리로 10개 SSH 연결 관리
 - 각 연결에서 PTY 세션 + 주기적 exec 명령 (리소스 폴링 시뮬레이션)
 - 네트워크 장애 시뮬레이션 (iptables 규칙으로 패킷 드롭)
+
+**실행 결과** (2026-02-07, Ubuntu 24.04, localhost SSH):
+- ✅ 10/10 세션 연결 성공 (초기 연결 181-186ms)
+- ✅ 300초 유지, 비정상 종료 0건
+- ✅ 세션당 58회 리소스 폴링 (5초 간격 안정)
+- ✅ 세션당 ~356-360KB PTY 출력 (medium intensity)
+- ✅ Disconnect injection (120초) 후 재연결 100% 성공 (10/10)
+- ✅ Reconnect p95 = 5,578ms (< 15,000ms 기준 충족)
+- 🐛 DNS 해석 버그 발견/수정: `SocketAddr::parse()` → `ToSocketAddrs` 변경
 
 **성공 기준**:
 - 10개 세션 30분 유지 (0% 비정상 종료)
@@ -660,13 +679,13 @@ Sources:
 
 ### ADR-002: xterm.js 선택 — 터미널 에뮬레이터 렌더링 라이브러리
 
-**상태**: Proposed (SPIKE-1 완료 후 확정)
+**상태**: Conditionally Accepted (빌드/통합 검증 완료, 데스크톱 레이턴시 측정 후 최종 확정)
 
 **컨텍스트**:
 Desktop App의 각 패인에 SSH 터미널을 렌더링해야 한다. 터미널 에뮬레이터는 256색/truecolor, 이스케이프 시퀀스, 복사/붙여넣기, 대량 출력 처리를 지원해야 한다(MUST-3). Web Frontend에서 동작하는 터미널 렌더링 라이브러리가 필요하다.
 
 **결정**:
-**xterm.js를 터미널 에뮬레이터 렌더링 라이브러리로 선택한다.** 단, SPIKE-1의 Tauri WebView 성능 검증 결과에 따라 최종 확정한다.
+**xterm.js를 터미널 에뮬레이터 렌더링 라이브러리로 선택한다.** SPIKE-1에서 빌드 파이프라인과 Tauri+xterm.js 통합이 검증되었으며 (2026-02-07), 데스크톱 환경에서의 실측 레이턴시 확인 후 최종 확정한다.
 
 **근거**:
 

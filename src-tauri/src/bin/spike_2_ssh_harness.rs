@@ -1,6 +1,6 @@
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufWriter, Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
@@ -132,11 +132,13 @@ fn connect_session(
     timeout: Duration,
 ) -> Result<(TcpStream, Session), String> {
     let addr = format!("{}:{}", host, port);
-    let tcp = TcpStream::connect_timeout(
-        &addr.parse().map_err(|e| format!("bad addr {}: {}", addr, e))?,
-        timeout,
-    )
-    .map_err(|e| format!("tcp connect {}: {}", addr, e))?;
+    let sock_addr = addr
+        .to_socket_addrs()
+        .map_err(|e| format!("resolve {}: {}", addr, e))?
+        .next()
+        .ok_or_else(|| format!("no addresses for {}", addr))?;
+    let tcp = TcpStream::connect_timeout(&sock_addr, timeout)
+        .map_err(|e| format!("tcp connect {}: {}", addr, e))?;
 
     tcp.set_read_timeout(Some(timeout))
         .map_err(|e| format!("set_read_timeout: {}", e))?;
