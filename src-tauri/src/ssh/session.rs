@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::sync::mpsc::TryRecvError;
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::Emitter;
 
 #[derive(Serialize, Clone, Debug)]
@@ -24,6 +24,15 @@ pub struct ReadFileResult {
     pub path: String,
     pub bytes: Vec<u8>,
     pub truncated: bool,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct ResourceSnapshot {
+    pub cpu_percent: Option<f64>,
+    pub ram_percent: Option<f64>,
+    pub disk_percent: Option<f64>,
+    pub ts_epoch: u64,
+    pub disk_path: String,
 }
 
 #[derive(Debug)]
@@ -250,6 +259,150 @@ fn sftp_read_file(sess: &Session, path: &str, max_bytes: Option<u64>) -> Result<
     })
 }
 
+fn exec_read_to_string(sess: &Session, cmd: &str) -> Result<String, String> {
+    let mut channel = sess
+        .channel_session()
+        .map_err(|e| format!("channel_session: {e}"))?;
+
+    channel.exec(cmd).map_err(|e| format!("exec {cmd}: {e}"))?;
+
+    let mut out = String::new();
+    channel
+        .read_to_string(&mut out)
+        .map_err(|e| format!("read stdout: {e}"))?;
+
+    let mut err_out = String::new();
+    let _ = channel.stderr().read_to_string(&mut err_out);
+
+    let _ = channel.close();
+    let _ = channel.wait_close();
+
+    if !err_out.trim().is_empty() {
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(&err_out);
+    }
+
+    Ok(out)
+}
+
+fn parse_cpu_percent_from_top(output: &str) -> Option<f64> {
+    let line = output
+        .lines()
+        .find(|l| l.contains("Cpu(s)") || l.contains("%Cpu(s)") || l.contains("CPU:"))?;
+
+    if line.contains("Cpu(s)") || line.contains("%Cpu(s)") {
+        let parts = line.split(':').nth(1).unwrap_or(line);
+        let mut idle: Option<f64> = None;
+        for seg in parts.split(',') {
+            let s = seg.trim();
+            let fields: Vec<&str> = s.split_whitespace().collect();
+            if fields.len() >= 2 && fields[1] == "id" {
+                if let Ok(v) = fields[0].parse::<f64>() {
+                    idle = Some(v);
+                    break;
+                }
+            }
+        }
+        idle.map(|id| (100.0 - id).max(0.0).min(100.0))
+    } else {
+        // Busybox-style: "CPU:  0% usr  0% sys  0% nic 99% idle  0% io  0% irq  0% sirq"
+        let mut iter = line.split_whitespace().peekable();
+        while let Some(tok) = iter.next() {
+            if tok.ends_with('%') {
+                let val_str = tok.trim_end_matches('%');
+                if let Some(label) = iter.peek().copied() {
+                    if label == "idle" {
+                        if let Ok(idle) = val_str.parse::<f64>() {
+                            return Some((100.0 - idle).max(0.0).min(100.0));
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+fn parse_ram_percent_from_free(output: &str) -> Option<f64> {
+    let line = output.lines().find(|l| l.trim_start().starts_with("Mem:"))?;
+    let fields: Vec<&str> = line.split_whitespace().collect();
+    if fields.len() < 3 {
+        return None;
+    }
+
+    let total = fields.get(1)?.parse::<f64>().ok()?;
+    if total <= 0.0 {
+        return None;
+    }
+
+    // `free -m` Mem line: total is fields[1], used is fields[2]
+    let used = fields.get(2)?.parse::<f64>().ok()?;
+    Some(((used / total) * 100.0).max(0.0).min(100.0))
+}
+
+fn parse_disk_percent_from_df(output: &str) -> Option<f64> {
+    let line = output.lines().skip(1).find(|l| !l.trim().is_empty())?;
+    let fields: Vec<&str> = line.split_whitespace().collect();
+    let use_field = fields.iter().find(|f| f.ends_with('%'))?;
+    let v = use_field.trim_end_matches('%').parse::<f64>().ok()?;
+    Some(v.max(0.0).min(100.0))
+}
+
+fn now_epoch() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_else(|_| Duration::from_secs(0))
+        .as_secs()
+}
+
+fn collect_resource_snapshot(sess: &Session, project_path: &str) -> ResourceSnapshot {
+    let cpu_output = exec_read_to_string(sess, "LANG=C top -bn1");
+    let free_output = exec_read_to_string(sess, "LANG=C free -m");
+
+    let preferred_path = if project_path.trim().is_empty() {
+        "/"
+    } else {
+        project_path.trim()
+    };
+
+    let df_cmd = format!("LANG=C df -P {}", shell_escape(preferred_path));
+    let mut disk_path = preferred_path.to_string();
+    let mut df_output = exec_read_to_string(sess, &df_cmd);
+    if df_output.is_err() && preferred_path != "/" {
+        disk_path = "/".to_string();
+        df_output = exec_read_to_string(sess, "LANG=C df -P /");
+    }
+
+    let cpu_percent = cpu_output.ok().and_then(|o| parse_cpu_percent_from_top(&o));
+    let ram_percent = free_output.ok().and_then(|o| parse_ram_percent_from_free(&o));
+    let disk_percent = df_output.ok().and_then(|o| parse_disk_percent_from_df(&o));
+
+    ResourceSnapshot {
+        cpu_percent,
+        ram_percent,
+        disk_percent,
+        ts_epoch: now_epoch(),
+        disk_path,
+    }
+}
+
+fn shell_escape(value: &str) -> String {
+    // Single-quote escaping for /bin/sh -c. Safe for most POSIX shells.
+    let mut out = String::new();
+    out.push('\'');
+    for ch in value.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
+}
+
 fn session_worker(
     config: SshSessionConfig,
     app_handle: tauri::AppHandle,
@@ -257,6 +410,7 @@ fn session_worker(
 ) {
     let status_event = format!("session-status-{}", config.id);
     let output_event = format!("terminal-output-{}", config.id);
+    let resource_event = format!("resource-update-{}", config.id);
 
     let emit_status = |status: SessionStatus| {
         let _ = app_handle.emit(&status_event, status);
@@ -418,6 +572,10 @@ fn session_worker(
     // 13) non-blocking reads
     sess.set_blocking(false);
 
+    let mut last_resource_emit = Instant::now()
+        .checked_sub(Duration::from_secs(5))
+        .unwrap_or_else(Instant::now);
+
     // 14) main loop
     loop {
         match cmd_rx.try_recv() {
@@ -468,6 +626,15 @@ fn session_worker(
                 emit_status(SessionStatus::Error(format!("channel read: {e}")));
                 break;
             }
+        }
+
+        // Periodic resource snapshot (every 5 seconds)
+        if last_resource_emit.elapsed() >= Duration::from_secs(5) {
+            sess.set_blocking(true);
+            let snapshot = collect_resource_snapshot(&sess, &config.project_path);
+            sess.set_blocking(false);
+            let _ = app_handle.emit(&resource_event, snapshot);
+            last_resource_emit = Instant::now();
         }
 
         std::thread::sleep(Duration::from_millis(10));

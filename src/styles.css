@@ -569,6 +569,60 @@ html, body {
   display: flex;
 }
 
+/* ── Resource Bar ── */
+
+.resource-bar {
+  display: none;
+  height: 34px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  border-top: 1px solid var(--border);
+  background: rgba(10, 10, 18, 0.85);
+  backdrop-filter: blur(6px);
+  z-index: 6;
+}
+
+#workspace-view.has-resources .resource-bar {
+  display: flex;
+}
+
+.resource-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.35);
+  font-family: 'JetBrains Mono', Menlo, Monaco, Consolas, 'Courier New', monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+  max-width: 340px;
+}
+
+.resource-host {
+  color: var(--text-primary);
+  max-width: 140px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metric {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.metric .k { color: var(--text-dim); }
+.metric .v { color: var(--text-secondary); }
+
+.metric.ok .v { color: var(--success); }
+.metric.warn .v { color: #f1c40f; }
+.metric.crit .v { color: var(--danger); }
+.metric.na .v { color: var(--text-dim); }
+
 /* ── Workspace Split + Side Panel ── */
 
 .workspace-split {

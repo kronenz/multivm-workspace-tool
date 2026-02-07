@@ -65,6 +65,14 @@ interface ReadFileResult {
   truncated: boolean;
 }
 
+interface ResourceSnapshot {
+  cpu_percent: number | null;
+  ram_percent: number | null;
+  disk_percent: number | null;
+  ts_epoch: number;
+  disk_path: string;
+}
+
 let selectedWorksetId: string | null = null;
 let allSummaries: WorksetSummary[] = [];
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -76,6 +84,8 @@ let activeWorkspace: {
 } | null = null;
 
 let eventUnlisteners: UnlistenFn[] = [];
+
+let resourceSnapshots = new Map<string, ResourceSnapshot>();
 
 let panelOpen = false;
 let panelMode: 'files' | 'docs' = 'files';
@@ -135,6 +145,72 @@ function showToast(message: string, type: "success" | "error"): void {
   toastTimer = setTimeout(() => {
     toast!.classList.remove("visible");
   }, 3000);
+}
+
+// ── Resource Bar (MVP Feature 7) ──
+
+function clearResourceBar(): void {
+  resourceSnapshots.clear();
+  const bar = document.getElementById('resource-bar');
+  if (bar) {
+    bar.innerHTML = '';
+  }
+  const ws = document.getElementById('workspace-view');
+  ws?.classList.remove('has-resources');
+}
+
+function renderResourceBar(): void {
+  const bar = document.getElementById('resource-bar');
+  if (!bar || !activeWorkspace) return;
+
+  const sessions = activeWorkspace.sessionInfos
+    .filter((s) => Boolean(s.session_id))
+    .sort((a, b) => a.connection_index - b.connection_index);
+
+  if (sessions.length === 0) {
+    bar.innerHTML = '';
+    $("workspace-view").classList.remove('has-resources');
+    return;
+  }
+
+  $("workspace-view").classList.add('has-resources');
+
+  const html = sessions
+    .map((s) => {
+      const snap = resourceSnapshots.get(s.session_id);
+      return renderResourceItem(s.host, snap);
+    })
+    .join('');
+
+  bar.innerHTML = html;
+}
+
+function renderResourceItem(host: string, snap: ResourceSnapshot | undefined): string {
+  const cpu = snap?.cpu_percent ?? null;
+  const ram = snap?.ram_percent ?? null;
+  const disk = snap?.disk_percent ?? null;
+
+  return `
+    <div class="resource-item">
+      <span class="resource-host">${escapeHtml(host)}</span>
+      ${renderMetric('CPU', cpu)}
+      ${renderMetric('RAM', ram)}
+      ${renderMetric('DSK', disk)}
+    </div>
+  `;
+}
+
+function renderMetric(label: string, value: number | null): string {
+  const cls = metricClass(value);
+  const text = value === null || Number.isNaN(value) ? 'N/A' : `${Math.round(value)}%`;
+  return `<span class="metric ${cls}"><span class="k">${label}</span><span class="v">${text}</span></span>`;
+}
+
+function metricClass(value: number | null): string {
+  if (value === null || Number.isNaN(value)) return 'na';
+  if (value < 50) return 'ok';
+  if (value < 80) return 'warn';
+  return 'crit';
 }
 
 // ── Workspace Side Panel (File Browser + Markdown Viewer) ──
@@ -917,6 +993,8 @@ async function cleanupWorkspace(): Promise<void> {
     destroyWorkspace(activeWorkspace.panes);
     activeWorkspace = null;
   }
+
+  clearResourceBar();
 }
 
 async function handleActivateWorkset(worksetId: string): Promise<void> {
@@ -1030,6 +1108,16 @@ async function handleActivateWorkset(worksetId: string): Promise<void> {
       );
       eventUnlisteners.push(unlisten2);
 
+      // Resource updates → update bottom resource bar
+      const unlisten3 = await listen<ResourceSnapshot>(
+        `resource-update-${session.session_id}`,
+        (event) => {
+          resourceSnapshots.set(session.session_id, event.payload);
+          renderResourceBar();
+        }
+      );
+      eventUnlisteners.push(unlisten3);
+
       // Terminal input → send to SSH via IPC
       if (pane.terminal) {
         const inputDisposable = pane.terminal.terminal.onData((data: string) => {
@@ -1055,6 +1143,7 @@ async function handleActivateWorkset(worksetId: string): Promise<void> {
 
     initWorkspacePanel();
     syncPanelToActivePane();
+    renderResourceBar();
 
     showToast("Workspace activated", "success");
   } catch (err) {
