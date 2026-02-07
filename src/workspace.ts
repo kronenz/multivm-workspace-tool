@@ -53,6 +53,8 @@ class OutputBuffer {
 
 let activePaneIndex = 0;
 
+let gridResizerObserver: ResizeObserver | null = null;
+
 export function getActivePaneIndex(): number {
   return activePaneIndex;
 }
@@ -66,6 +68,7 @@ export function createWorkspace(
   connectionCount: number,
 ): PaneState[] {
   const paneElements = createGrid(gridContainer, rows, cols);
+  installGridResizers(gridContainer, rows, cols);
   const panes: PaneState[] = [];
 
   for (let i = 0; i < paneElements.length; i++) {
@@ -103,6 +106,189 @@ export function createWorkspace(
   }
 
   return panes;
+}
+
+function installGridResizers(gridContainer: HTMLElement, rows: number, cols: number): void {
+  // Clear previous overlay if any.
+  gridContainer.querySelectorAll('.grid-resizers').forEach((n) => n.remove());
+  if (gridResizerObserver) {
+    gridResizerObserver.disconnect();
+    gridResizerObserver = null;
+  }
+
+  if (rows <= 1 && cols <= 1) return;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'grid-resizers';
+  gridContainer.appendChild(overlay);
+
+  const rowFracs = Array.from({ length: rows }, () => 1);
+  const colFracs = Array.from({ length: cols }, () => 1);
+
+  const minPx = 140;
+  const handleHalf = 5;
+
+  function applyTemplates(): void {
+    gridContainer.style.gridTemplateRows = rowFracs.map((f) => `${f}fr`).join(' ');
+    gridContainer.style.gridTemplateColumns = colFracs.map((f) => `${f}fr`).join(' ');
+  }
+
+  function getMetrics(): {
+    innerLeft: number;
+    innerTop: number;
+    innerWidth: number;
+    innerHeight: number;
+    gap: number;
+    colWidths: number[];
+    rowHeights: number[];
+  } {
+    const rect = gridContainer.getBoundingClientRect();
+    const style = getComputedStyle(gridContainer);
+    const padL = parseFloat(style.paddingLeft) || 0;
+    const padR = parseFloat(style.paddingRight) || 0;
+    const padT = parseFloat(style.paddingTop) || 0;
+    const padB = parseFloat(style.paddingBottom) || 0;
+    const gap = parseFloat(style.gap) || 0;
+
+    const innerWidth = Math.max(0, rect.width - padL - padR);
+    const innerHeight = Math.max(0, rect.height - padT - padB);
+
+    const totalColFrac = colFracs.reduce((a, b) => a + b, 0);
+    const totalRowFrac = rowFracs.reduce((a, b) => a + b, 0);
+
+    const widthAvail = Math.max(0, innerWidth - gap * Math.max(0, cols - 1));
+    const heightAvail = Math.max(0, innerHeight - gap * Math.max(0, rows - 1));
+
+    const colWidths = colFracs.map((f) => (totalColFrac ? (widthAvail * f) / totalColFrac : 0));
+    const rowHeights = rowFracs.map((f) => (totalRowFrac ? (heightAvail * f) / totalRowFrac : 0));
+
+    return {
+      innerLeft: padL,
+      innerTop: padT,
+      innerWidth,
+      innerHeight,
+      gap,
+      colWidths,
+      rowHeights,
+    };
+  }
+
+  function layoutHandles(): void {
+    const m = getMetrics();
+
+    // Vertical handles
+    let x = m.innerLeft;
+    for (let i = 0; i < cols - 1; i++) {
+      x += m.colWidths[i];
+      const left = x + m.gap / 2 - handleHalf;
+      const el = overlay.querySelector<HTMLElement>(`.grid-resizer.v[data-idx="${i}"]`);
+      if (el) {
+        el.style.left = `${left}px`;
+      }
+      x += m.gap;
+    }
+
+    // Horizontal handles
+    let y = m.innerTop;
+    for (let i = 0; i < rows - 1; i++) {
+      y += m.rowHeights[i];
+      const top = y + m.gap / 2 - handleHalf;
+      const el = overlay.querySelector<HTMLElement>(`.grid-resizer.h[data-idx="${i}"]`);
+      if (el) {
+        el.style.top = `${top}px`;
+      }
+      y += m.gap;
+    }
+  }
+
+  function setColPair(i: number, newLeftPx: number, newRightPx: number): void {
+    const pairTotal = colFracs[i] + colFracs[i + 1];
+    const sumPx = newLeftPx + newRightPx;
+    if (sumPx <= 0 || pairTotal <= 0) return;
+    const leftFrac = (newLeftPx / sumPx) * pairTotal;
+    colFracs[i] = leftFrac;
+    colFracs[i + 1] = pairTotal - leftFrac;
+    applyTemplates();
+    layoutHandles();
+  }
+
+  function setRowPair(i: number, newTopPx: number, newBottomPx: number): void {
+    const pairTotal = rowFracs[i] + rowFracs[i + 1];
+    const sumPx = newTopPx + newBottomPx;
+    if (sumPx <= 0 || pairTotal <= 0) return;
+    const topFrac = (newTopPx / sumPx) * pairTotal;
+    rowFracs[i] = topFrac;
+    rowFracs[i + 1] = pairTotal - topFrac;
+    applyTemplates();
+    layoutHandles();
+  }
+
+  // Build handles
+  for (let i = 0; i < cols - 1; i++) {
+    const handle = document.createElement('div');
+    handle.className = 'grid-resizer v';
+    handle.dataset.idx = String(i);
+    handle.style.left = '0px';
+    handle.addEventListener('pointerdown', (ev) => {
+      ev.preventDefault();
+      handle.setPointerCapture(ev.pointerId);
+      const startX = ev.clientX;
+      const m = getMetrics();
+      const pairWidth = m.colWidths[i] + m.colWidths[i + 1];
+      let leftPx = m.colWidths[i];
+
+      const onMove = (e: PointerEvent) => {
+        const dx = e.clientX - startX;
+        const nextLeft = Math.min(Math.max(leftPx + dx, minPx), pairWidth - minPx);
+        setColPair(i, nextLeft, pairWidth - nextLeft);
+      };
+      const onUp = () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+      };
+
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+    });
+    overlay.appendChild(handle);
+  }
+
+  for (let i = 0; i < rows - 1; i++) {
+    const handle = document.createElement('div');
+    handle.className = 'grid-resizer h';
+    handle.dataset.idx = String(i);
+    handle.style.top = '0px';
+    handle.addEventListener('pointerdown', (ev) => {
+      ev.preventDefault();
+      handle.setPointerCapture(ev.pointerId);
+      const startY = ev.clientY;
+      const m = getMetrics();
+      const pairHeight = m.rowHeights[i] + m.rowHeights[i + 1];
+      let topPx = m.rowHeights[i];
+
+      const onMove = (e: PointerEvent) => {
+        const dy = e.clientY - startY;
+        const nextTop = Math.min(Math.max(topPx + dy, minPx), pairHeight - minPx);
+        setRowPair(i, nextTop, pairHeight - nextTop);
+      };
+      const onUp = () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+      };
+
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+    });
+    overlay.appendChild(handle);
+  }
+
+  applyTemplates();
+  layoutHandles();
+
+  gridResizerObserver = new ResizeObserver(() => {
+    layoutHandles();
+  });
+  gridResizerObserver.observe(gridContainer);
 }
 
 export function attachTerminal(pane: PaneState): void {
@@ -166,6 +352,10 @@ export function detachTerminal(pane: PaneState): void {
 export function destroyWorkspace(panes: PaneState[]): void {
   for (const pane of panes) {
     detachTerminal(pane);
+  }
+  if (gridResizerObserver) {
+    gridResizerObserver.disconnect();
+    gridResizerObserver = null;
   }
   activePaneIndex = 0;
 }

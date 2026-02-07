@@ -104,6 +104,8 @@ let mdPathEl: HTMLElement | null = null;
 let mdNoteEl: HTMLElement | null = null;
 let panelInitialized = false;
 
+let panelWidthPx: number | null = null;
+
 let currentTheme: ThemeName = 'dark';
 
 function $(id: string): HTMLElement {
@@ -273,6 +275,7 @@ function initWorkspacePanel(): void {
   const closeBtn = $("btn-panel-close") as HTMLButtonElement;
   const refreshBtn = $("btn-panel-refresh") as HTMLButtonElement;
   const scrim = $("workspace-panel-scrim");
+  const resizer = $("workspace-panel-resizer");
 
   const filesView = $("file-browser-view");
   const docsView = $("markdown-viewer-view");
@@ -319,6 +322,54 @@ function initWorkspacePanel(): void {
   closeBtn.addEventListener('click', () => setPanelOpen(false));
   scrim.addEventListener('click', () => setPanelOpen(false));
 
+  // Panel resize (desktop only)
+  const saved = localStorage.getItem('panelWidthPx');
+  if (saved) {
+    const v = parseInt(saved, 10);
+    if (Number.isFinite(v)) {
+      panelWidthPx = v;
+      applyPanelWidth();
+    }
+  }
+
+  resizer.addEventListener('pointerdown', (ev) => {
+    if (!panelOpen) return;
+    ev.preventDefault();
+    resizer.setPointerCapture(ev.pointerId);
+
+    const startX = ev.clientX;
+    const rootStyle = getComputedStyle(document.documentElement);
+    const cssVar = parseFloat(rootStyle.getPropertyValue('--panel-width'));
+    const measured = parseFloat(getComputedStyle($("workspace-panel")).width);
+    const current =
+      panelWidthPx ??
+      (Number.isFinite(cssVar) && cssVar > 0
+        ? cssVar
+        : Number.isFinite(measured) && measured > 0
+          ? measured
+          : 380);
+    panelWidthPx = current;
+
+    const min = 260;
+    const max = 720;
+
+    const onMove = (e: PointerEvent) => {
+      const dx = startX - e.clientX;
+      panelWidthPx = Math.max(min, Math.min(max, current + dx));
+      applyPanelWidth();
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      if (panelWidthPx) {
+        localStorage.setItem('panelWidthPx', String(Math.round(panelWidthPx)));
+      }
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  });
+
   refreshBtn.addEventListener('click', () => {
     if (panelMode === 'files') {
       void fileBrowser?.refresh();
@@ -330,6 +381,11 @@ function initWorkspacePanel(): void {
   // Default state
   setPanelMode('files');
   setPanelOpen(false);
+}
+
+function applyPanelWidth(): void {
+  if (!panelWidthPx) return;
+  document.documentElement.style.setProperty('--panel-width', `${Math.round(panelWidthPx)}px`);
 }
 
 function setPanelMode(mode: 'files' | 'docs'): void {

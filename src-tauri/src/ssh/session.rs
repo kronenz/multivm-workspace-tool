@@ -196,10 +196,40 @@ fn stat_is_dir(perm: Option<u32>) -> bool {
 }
 
 fn sftp_list_directory(sess: &Session, path: &str) -> Result<Vec<FileEntry>, String> {
-    let sftp = sess.sftp().map_err(|e| format!("sftp init: {e}"))?;
-    let entries = sftp
-        .readdir(Path::new(path))
-        .map_err(|e| format!("sftp readdir {path}: {e}"))?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let sftp = loop {
+        match sess.sftp() {
+            Ok(s) => break s,
+            Err(e) => {
+                let io_err: std::io::Error = e.into();
+                if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                    if Instant::now() >= deadline {
+                        return Err("sftp init timed out".to_string());
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                return Err(format!("sftp init: {io_err}"));
+            }
+        }
+    };
+
+    let entries = loop {
+        match sftp.readdir(Path::new(path)) {
+            Ok(v) => break v,
+            Err(e) => {
+                let io_err: std::io::Error = e.into();
+                if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                    if Instant::now() >= deadline {
+                        return Err(format!("sftp readdir {path}: timed out"));
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                return Err(format!("sftp readdir {path}: {io_err}"));
+            }
+        }
+    };
 
     let mut out = Vec::new();
     for (p, stat) in entries {
@@ -229,19 +259,59 @@ fn sftp_read_file(sess: &Session, path: &str, max_bytes: Option<u64>) -> Result<
     const DEFAULT_MAX_BYTES: u64 = 1024 * 1024; // 1 MiB
     let limit = max_bytes.unwrap_or(DEFAULT_MAX_BYTES);
 
-    let sftp = sess.sftp().map_err(|e| format!("sftp init: {e}"))?;
-    let mut file = sftp
-        .open(Path::new(path))
-        .map_err(|e| format!("sftp open {path}: {e}"))?;
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let sftp = loop {
+        match sess.sftp() {
+            Ok(s) => break s,
+            Err(e) => {
+                let io_err: std::io::Error = e.into();
+                if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                    if Instant::now() >= deadline {
+                        return Err("sftp init timed out".to_string());
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                return Err(format!("sftp init: {io_err}"));
+            }
+        }
+    };
+
+    let mut file = loop {
+        match sftp.open(Path::new(path)) {
+            Ok(f) => break f,
+            Err(e) => {
+                let io_err: std::io::Error = e.into();
+                if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                    if Instant::now() >= deadline {
+                        return Err(format!("sftp open {path}: timed out"));
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                return Err(format!("sftp open {path}: {io_err}"));
+            }
+        }
+    };
 
     let mut out: Vec<u8> = Vec::new();
     let mut buf = [0u8; 8192];
     while (out.len() as u64) < limit {
         let remaining = (limit - out.len() as u64) as usize;
         let to_read = std::cmp::min(buf.len(), remaining);
-        let n = file
-            .read(&mut buf[..to_read])
-            .map_err(|e| format!("sftp read {path}: {e}"))?;
+        let n = loop {
+            match file.read(&mut buf[..to_read]) {
+                Ok(n) => break n,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return Err(format!("sftp read {path}: timed out"));
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                Err(e) => return Err(format!("sftp read {path}: {e}")),
+            }
+        };
         if n == 0 {
             break;
         }
@@ -257,7 +327,14 @@ fn sftp_read_file(sess: &Session, path: &str, max_bytes: Option<u64>) -> Result<
         match file.read(&mut one) {
             Ok(0) => false,
             Ok(_) => true,
-            Err(e) => return Err(format!("sftp read {path}: {e}")),
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::WouldBlock {
+                    // Can't determine reliably; treat as truncated to be safe.
+                    true
+                } else {
+                    return Err(format!("sftp read {path}: {e}"));
+                }
+            }
         }
     };
 
@@ -269,22 +346,78 @@ fn sftp_read_file(sess: &Session, path: &str, max_bytes: Option<u64>) -> Result<
 }
 
 fn exec_read_to_string(sess: &Session, cmd: &str) -> Result<String, String> {
-    let mut channel = sess
-        .channel_session()
-        .map_err(|e| format!("channel_session: {e}"))?;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut channel = loop {
+        match sess.channel_session() {
+            Ok(c) => break c,
+            Err(e) => {
+                let io_err: std::io::Error = e.into();
+                if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                    if Instant::now() >= deadline {
+                        return Err("channel_session timed out".to_string());
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                return Err(format!("channel_session: {io_err}"));
+            }
+        }
+    };
 
-    channel.exec(cmd).map_err(|e| format!("exec {cmd}: {e}"))?;
+    loop {
+        match channel.exec(cmd) {
+            Ok(()) => break,
+            Err(e) => {
+                let io_err: std::io::Error = e.into();
+                if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                    if Instant::now() >= deadline {
+                        return Err(format!("exec {cmd}: timed out"));
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                return Err(format!("exec {cmd}: {io_err}"));
+            }
+        }
+    }
 
-    let mut out = String::new();
-    channel
-        .read_to_string(&mut out)
-        .map_err(|e| format!("read stdout: {e}"))?;
+    let mut out_bytes: Vec<u8> = Vec::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        match channel.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => out_bytes.extend_from_slice(&buf[..n]),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(e) => return Err(format!("read stdout: {e}")),
+        }
+    }
 
-    let mut err_out = String::new();
-    let _ = channel.stderr().read_to_string(&mut err_out);
+    let mut err_bytes: Vec<u8> = Vec::new();
+    let mut err_buf = [0u8; 8192];
+    loop {
+        match channel.stderr().read(&mut err_buf) {
+            Ok(0) => break,
+            Ok(n) => err_bytes.extend_from_slice(&err_buf[..n]),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(_) => break,
+        }
+    }
 
     let _ = channel.close();
     let _ = channel.wait_close();
+
+    let mut out = String::from_utf8_lossy(&out_bytes).to_string();
+    let err_out = String::from_utf8_lossy(&err_bytes).to_string();
 
     if !err_out.trim().is_empty() {
         if !out.ends_with('\n') {
@@ -410,6 +543,37 @@ fn shell_escape(value: &str) -> String {
     }
     out.push('\'');
     out
+}
+
+fn channel_write_all_nonblocking(
+    channel: &mut Channel,
+    data: &[u8],
+    timeout: Duration,
+) -> Result<(), std::io::Error> {
+    let deadline = Instant::now() + timeout;
+    let mut offset: usize = 0;
+    while offset < data.len() {
+        match channel.write(&data[offset..]) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "channel write returned 0",
+                ));
+            }
+            Ok(n) => offset += n,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "channel write timed out",
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
 }
 
 fn session_worker(
@@ -680,12 +844,10 @@ fn session_worker(
         loop {
             match cmd_rx.try_recv() {
                 Ok(SessionCommand::Write(data)) => {
-                    sess.set_blocking(true);
-                    if let Err(e) = channel.write_all(&data) {
+                    if let Err(e) = channel_write_all_nonblocking(&mut channel, &data, Duration::from_secs(5)) {
                         emit_status(SessionStatus::Error(format!("channel write: {e}")));
                         break;
                     }
-                    sess.set_blocking(false);
                 }
                 Ok(SessionCommand::Resize { cols, rows }) => {
                     pty_cols = cols;
@@ -696,9 +858,7 @@ fn session_worker(
                     // Ignore while connected.
                 }
                 Ok(SessionCommand::ListDirectory { path, reply_tx }) => {
-                    sess.set_blocking(true);
                     let result = sftp_list_directory(&sess, &path);
-                    sess.set_blocking(false);
                     let _ = reply_tx.send(result);
                 }
                 Ok(SessionCommand::ReadFile {
@@ -706,9 +866,7 @@ fn session_worker(
                     max_bytes,
                     reply_tx,
                 }) => {
-                    sess.set_blocking(true);
                     let result = sftp_read_file(&sess, &path, max_bytes);
-                    sess.set_blocking(false);
                     let _ = reply_tx.send(result);
                 }
                 Ok(SessionCommand::Shutdown) => {
@@ -742,9 +900,7 @@ fn session_worker(
             }
 
             if last_resource_emit.elapsed() >= Duration::from_secs(5) {
-                sess.set_blocking(true);
                 let snapshot = collect_resource_snapshot(&sess, &config.project_path);
-                sess.set_blocking(false);
                 let _ = app_handle.emit(&resource_event, snapshot);
                 last_resource_emit = Instant::now();
             }
