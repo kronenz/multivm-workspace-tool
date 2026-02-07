@@ -175,7 +175,7 @@ Markdown Viewer UI is rendered in Web Frontend, file content is fetched by Rust 
 - [ ] User can open `.md` file from File Browser → file renders in Markdown Viewer pane
 - [ ] Markdown rendering supports: Headers (H1-H6), bold, italic, lists (ordered/unordered), tables, links, inline code, code blocks
 - [ ] Code blocks have syntax highlighting (detect language from fence: ```python, ```javascript, etc.)
-- [ ] User can click links in Markdown (external URLs open in browser, internal links show "not supported" message)
+- [ ] User can click links in Markdown (external URLs open in browser, same-document `#anchor` links scroll inside viewer, all other internal links show "not supported" message)
 - [ ] Markdown Viewer auto-refreshes when file changes on remote VM (5-second polling interval)
 - [ ] User can manually refresh Markdown Viewer (refresh button)
 
@@ -204,7 +204,7 @@ Resource Poller runs in Rust Core, sends updates to Frontend via IPC Events.
 - [ ] Resource values have color coding (green <50%, yellow 50-80%, red >80%)
 - [ ] Resource monitoring works on Ubuntu 22.04, Debian 11, CentOS 8 (Linux variants)
 - [ ] Resource monitoring gracefully fails on unsupported OS (shows "N/A" instead of crashing)
-- [ ] User can see resource values in dedicated pane or status bar (UI placement TBD)
+- [ ] User can see resource values in global status bar (bottom, fixed) while connected to one or more VMs
 
 **PRD Mapping**: MUST-7
 
@@ -247,7 +247,7 @@ AI CLI command is stored in Workset profile. User can edit command in Workset se
 **Description**:
 Detect SSH connection drops and attempt automatic reconnection. Features:
 - **Detection**: Monitor SSH connection state (keepalive packets, read/write errors)
-- **Reconnection Logic**: Max 3 retries, 5-second intervals between retries, exponential backoff with jitter
+- **Reconnection Logic**: Max 3 retries within 15 seconds (0s / 5s / 10s), with jitter to avoid reconnect storms
 - **UI Feedback**: Show "Reconnecting... (1/3)" message in terminal pane
 - **Session Recovery**: After reconnection, restore terminal state (re-execute `cd <project_folder>` if needed)
 - **Failure Handling**: After 3 failed retries, show "Connection lost. Click to reconnect manually."
@@ -292,6 +292,62 @@ Theme preference is saved in app settings and persists across sessions.
 - [ ] Theme change takes effect immediately (no app restart required)
 
 **PRD Mapping**: SHOULD-1 (promoted to MUST for MVP to improve usability)
+
+---
+
+## MVP Policies (Resolved TBDs)
+
+> 이 섹션은 문서 내 TBD 항목을 “테스트 가능한 정책”으로 확정한다.
+> 본 섹션의 정책이 관련 Feature 설명/Done Criteria의 TBD 문구보다 우선한다.
+
+---
+
+### Policy 1: Resource Monitoring UI Placement
+
+**결정**: MVP에서는 리소스 스냅샷을 **Global Status Bar(하단 고정)**에 표시한다.
+
+| Item | Policy (MVP) |
+|---|---|
+| Placement | 앱 하단 Status Bar (Grid Layout과 무관하게 항상 동일 위치) |
+| Content | VM별 CPU/RAM/Disk % 요약 + 색상 코딩 |
+| Update | 5초 주기(±1초) |
+| Visibility | 연결된 VM이 1개 이상일 때만 표시 |
+| Scaling | VM이 많아도 UI가 깨지지 않아야 함(축약/가로 스크롤 등 구현 선택) |
+| Failure | 수집 실패는 해당 항목만 `N/A`로 표시(앱 크래시 없음) |
+
+---
+
+### Policy 2: Markdown Link Handling
+
+**정의**
+
+- External link: `http://` 또는 `https://`로 시작하는 URL
+- Same-document anchor: `#section-title` 형태의 링크
+- Internal link: 상대경로 등(예: `../qa/mvp-spec.md`)
+
+**MVP 링크 처리 정책**
+
+| Link Type | Example | Behavior (MVP) |
+|---|---|---|
+| External | `https://example.com` | OS 기본 브라우저로 열기 |
+| Same-document anchor | `#acceptance-criteria` | Markdown Viewer 내부에서 해당 섹션으로 스크롤 |
+| Internal (relative path, file link) | `../qa/mvp-spec.md` | MVP에서는 미지원: "not supported" 메시지 표시 |
+
+---
+
+### Policy 3: SSH Auto-Reconnect Policy
+
+**재접속 트리거**: SSH 연결이 끊김으로 판정되는 이벤트(읽기/쓰기 오류, keepalive 실패 등) 발생 시
+
+| Item | Policy (MVP) |
+|---|---|
+| Detection | 드롭을 10초 이내에 감지 |
+| Retry budget | 자동 재시도 3회 |
+| Timing | 0초(즉시) / 5초 / 10초 시도 (총 15초 내) + 세션별 지터(폭주 완화) |
+| UI feedback | 해당 터미널 패인에 `Reconnecting... (n/3)` 상태 표기 |
+| Stop conditions | 인증 실패/호스트 검증 실패는 자동 재접속 중단(사용자 액션 필요) |
+| After success | 작업 디렉토리 복원(`cd <project_folder>`)은 보장 가능; 실행 중이던 원격 프로세스 복원은 보장하지 않음 |
+| After failure | `Connection lost. Click to reconnect manually.` 상태로 전환 |
 
 ---
 
@@ -600,7 +656,7 @@ Theme preference is saved in app settings and persists across sessions.
 
 **UI**: All 4 terminal panes show "Connection lost. Reconnecting... (1/3)" message.
 
-**Backend**: SSH Connection Manager detects connection drops, attempts reconnection with 5-second intervals.
+**Backend**: SSH Connection Manager detects connection drops, attempts reconnection with backoff + jitter (within 15 seconds).
 
 **Result**: After 8 seconds, all 4 SSH connections successfully reconnect. Terminals show prompts again. Jordan can continue working without manual intervention.
 
@@ -749,7 +805,7 @@ Theme preference is saved in app settings and persists across sessions.
 - **Disk Usage %**: Current disk space utilization percentage (0-100%)
 - **Update Frequency**: Every 5 seconds (±1 second)
 - **Display Format**: Percentage values with color coding (green <50%, yellow 50-80%, red >80%)
-- **UI Placement**: Status bar or dedicated resource monitoring pane (TBD during UI design)
+- **UI Placement**: Global status bar (bottom, fixed)
 
 **Collection Method**:
 1. **SSH exec commands** (executed by Resource Poller in Rust Core):
@@ -868,6 +924,7 @@ Theme preference is saved in app settings and persists across sessions.
 - [ ] Resource values have color coding (green <50%, yellow 50-80%, red >80%)
 - [ ] Resource monitoring works on Ubuntu, Debian, CentOS
 - [ ] Resource monitoring gracefully fails on unsupported OS (shows "N/A")
+- [ ] Resource values are visible in global status bar while connected to one or more VMs
 
 ---
 
@@ -885,7 +942,7 @@ Theme preference is saved in app settings and persists across sessions.
 ### AC-9: SSH Auto-Reconnect
 
 - [ ] SSH connection drop detected within 10 seconds
-- [ ] App automatically attempts reconnection (max 3 retries, 5-second intervals)
+- [ ] App automatically attempts reconnection (max 3 retries within 15 seconds; retries are staggered with jitter)
 - [ ] User sees "Reconnecting... (1/3)" message during reconnection
 - [ ] Reconnection succeeds → terminal prompt reappears
 - [ ] Reconnection fails after 3 retries → user sees "Connection lost. Click to reconnect manually."
