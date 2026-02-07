@@ -1,43 +1,52 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { Terminal } from "@xterm/xterm";
-import { WebglAddon } from "@xterm/addon-webgl";
-import { FitAddon } from "@xterm/addon-fit";
-import "@xterm/xterm/css/xterm.css";
-import { LatencyRecorder } from "./latency";
 
-interface EchoResponse {
-  ch: string;
-  received_at_us: number;
+interface WorksetSummary {
+  id: string;
+  name: string;
+  connection_count: number;
+  updated_at: string;
 }
 
-interface FloodSummary {
-  flood_id: number;
-  lines: number;
-  elapsed_ms: number;
+interface ConnectionConfig {
+  host: string;
+  port: number;
+  user: string;
+  auth_method: "key" | "password" | "ssh_config";
+  key_path: string | null;
+  project_path: string;
+  ai_cli_command: string | null;
 }
 
-const keystrokeLatency = new LatencyRecorder();
-const floodLatency = new LatencyRecorder();
+interface GridLayout {
+  preset: string | null;
+  rows: number;
+  cols: number;
+}
 
-let term: Terminal;
-let fitAddon: FitAddon;
-let webglAddon: WebglAddon | null = null;
-let rendererType = "canvas";
+interface Workset {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  connections: ConnectionConfig[];
+  grid_layout: GridLayout;
+}
 
-let lastKeydownAt: number | null = null;
+interface CreateWorksetInput {
+  name: string;
+  connections: ConnectionConfig[];
+  grid_layout: GridLayout;
+}
 
-let echoQueue: Promise<void> = Promise.resolve();
+interface UpdateWorksetInput {
+  name?: string;
+  connections?: ConnectionConfig[];
+  grid_layout?: GridLayout;
+}
 
-let outputBuffer = "";
-let outputFlushScheduled = false;
-
-let floodInProgress = false;
-let floodStartAt = 0;
-let floodRustSummary: FloodSummary | null = null;
-
-let lastStatsUpdateAt = 0;
-let statsUpdateScheduled = false;
+let selectedWorksetId: string | null = null;
+let allSummaries: WorksetSummary[] = [];
+let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
 function $(id: string): HTMLElement {
   const el = document.getElementById(id);
@@ -45,208 +54,588 @@ function $(id: string): HTMLElement {
   return el;
 }
 
-function updateStats(): void {
-  $("keystroke-stats").textContent = keystrokeLatency.summary();
-  $("flood-stats").textContent = floodLatency.summary();
-  $("renderer-info").textContent = rendererType;
-  $("sample-count").textContent = String(keystrokeLatency.count);
+function escapeHtml(str: string): string {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
 }
 
-function scheduleStatsUpdate(): void {
-  const now = performance.now();
-  if (now - lastStatsUpdateAt < 100) return;
-  if (statsUpdateScheduled) return;
-  statsUpdateScheduled = true;
+function formatDate(iso: string): string {
+  try {
+    const d = new Date(iso);
+    const now = new Date();
+    const diff = now.getTime() - d.getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    if (days < 30) return `${days}d ago`;
+    return d.toLocaleDateString();
+  } catch {
+    return iso;
+  }
+}
+
+function showToast(message: string, type: "success" | "error"): void {
+  let toast = document.querySelector(".toast") as HTMLElement | null;
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.className = "toast";
+    document.body.appendChild(toast);
+  }
+  if (toastTimer) clearTimeout(toastTimer);
+  toast.textContent = message;
+  toast.className = `toast toast-${type}`;
   requestAnimationFrame(() => {
-    statsUpdateScheduled = false;
-    lastStatsUpdateAt = performance.now();
-    updateStats();
+    toast!.classList.add("visible");
   });
+  toastTimer = setTimeout(() => {
+    toast!.classList.remove("visible");
+  }, 3000);
 }
 
-function scheduleOutputFlush(): void {
-  if (outputFlushScheduled) return;
-  outputFlushScheduled = true;
-  requestAnimationFrame(() => {
-    outputFlushScheduled = false;
-    if (outputBuffer.length === 0) return;
-    const payload = outputBuffer;
-    outputBuffer = "";
-    term.write(payload);
-  });
+const GRID_PRESETS: Record<string, { rows: number; cols: number }> = {
+  "1x1": { rows: 1, cols: 1 },
+  "2x1": { rows: 2, cols: 1 },
+  "2x2": { rows: 2, cols: 2 },
+  "2x3": { rows: 2, cols: 3 },
+  "3x3": { rows: 3, cols: 3 },
+};
+
+async function loadWorksets(): Promise<void> {
+  try {
+    allSummaries = await invoke<WorksetSummary[]>("list_worksets");
+    renderWorksetList(allSummaries);
+  } catch (err) {
+    showToast(`Failed to load worksets: ${String(err)}`, "error");
+    allSummaries = [];
+    renderWorksetList([]);
+  }
 }
 
-function initTerminal(): void {
-  term = new Terminal({
-    cursorBlink: true,
-    fontSize: 14,
-    fontFamily: "monospace",
-    theme: {
-      background: "#1a1a2e",
-      foreground: "#e0e0e0",
-      cursor: "#00d4ff",
-    },
-    scrollback: 15000,
-    convertEol: false,
-  });
+async function selectWorkset(id: string): Promise<void> {
+  try {
+    const workset = await invoke<Workset>("get_workset", { id });
+    selectedWorksetId = id;
+    highlightSelectedCard();
+    renderWorksetDetail(workset);
+  } catch (err) {
+    showToast(`Failed to load workset: ${String(err)}`, "error");
+  }
+}
 
-  fitAddon = new FitAddon();
-  term.loadAddon(fitAddon);
-
-  const container = $("terminal-container");
-  term.open(container);
-
-  container.addEventListener(
-    "keydown",
-    () => {
-      lastKeydownAt = performance.now();
-    },
-    true
-  );
+async function saveWorkset(
+  formEl: HTMLFormElement,
+  editId: string | null
+): Promise<void> {
+  const data = extractFormData(formEl);
+  if (!data) return;
 
   try {
-    webglAddon = new WebglAddon();
-    webglAddon.onContextLoss(() => {
-      webglAddon?.dispose();
-      webglAddon = null;
-      rendererType = "canvas (webgl context lost)";
-      updateStats();
-    });
-    term.loadAddon(webglAddon);
-    rendererType = "webgl";
-  } catch {
-    rendererType = "canvas (webgl unavailable)";
+    if (editId) {
+      const input: UpdateWorksetInput = {
+        name: data.name,
+        connections: data.connections,
+        grid_layout: data.grid_layout,
+      };
+      await invoke("update_workset", { id: editId, input });
+      showToast("Workset updated", "success");
+    } else {
+      const input: CreateWorksetInput = {
+        name: data.name,
+        connections: data.connections,
+        grid_layout: data.grid_layout,
+      };
+      await invoke("create_workset", { input });
+      showToast("Workset created", "success");
+    }
+    await loadWorksets();
+    if (editId) {
+      await selectWorkset(editId);
+    } else {
+      showEmptyState();
+    }
+  } catch (err) {
+    showToast(`Failed to save workset: ${String(err)}`, "error");
+  }
+}
+
+async function deleteWorkset(id: string): Promise<void> {
+  if (!window.confirm("Delete this workset? This cannot be undone.")) return;
+  try {
+    await invoke("delete_workset", { id });
+    showToast("Workset deleted", "success");
+    selectedWorksetId = null;
+    await loadWorksets();
+    showEmptyState();
+  } catch (err) {
+    showToast(`Failed to delete workset: ${String(err)}`, "error");
+  }
+}
+
+function extractFormData(
+  formEl: HTMLFormElement
+): CreateWorksetInput | null {
+  const nameInput = formEl.querySelector<HTMLInputElement>('[name="workset-name"]');
+  const name = nameInput?.value.trim() ?? "";
+  if (!name) {
+    nameInput?.classList.add("form-input-error");
+    showToast("Workset name is required", "error");
+    return null;
+  }
+  nameInput?.classList.remove("form-input-error");
+
+  const presetSelect = formEl.querySelector<HTMLSelectElement>('[name="grid-preset"]');
+  const presetValue = presetSelect?.value ?? "custom";
+  let rows: number;
+  let cols: number;
+  let preset: string | null;
+
+  if (presetValue === "custom") {
+    const rowsInput = formEl.querySelector<HTMLInputElement>('[name="grid-rows"]');
+    const colsInput = formEl.querySelector<HTMLInputElement>('[name="grid-cols"]');
+    rows = parseInt(rowsInput?.value ?? "1", 10) || 1;
+    cols = parseInt(colsInput?.value ?? "1", 10) || 1;
+    rows = Math.max(1, Math.min(rows, 10));
+    cols = Math.max(1, Math.min(cols, 10));
+    preset = null;
+  } else {
+    const p = GRID_PRESETS[presetValue];
+    rows = p?.rows ?? 1;
+    cols = p?.cols ?? 1;
+    preset = presetValue;
   }
 
-  fitAddon.fit();
-  updateStats();
+  const connectionCards = formEl.querySelectorAll<HTMLElement>(".connection-form-card");
+  if (connectionCards.length === 0) {
+    showToast("At least one connection is required", "error");
+    return null;
+  }
 
-  term.writeln("SPIKE-1: Tauri + xterm.js Latency Prototype");
-  term.writeln("--------------------------------------------");
-  term.writeln("Type characters to measure keystroke->echo latency.");
-  term.writeln("Use controls above to run flood/stream tests.");
-  term.writeln("");
-}
+  const connections: ConnectionConfig[] = [];
+  let hasError = false;
 
-function wireKeystrokeEcho(): void {
-  term.onData((data: string) => {
-    const startedAt = lastKeydownAt ?? performance.now();
-    lastKeydownAt = null;
+  connectionCards.forEach((card) => {
+    const hostInput = card.querySelector<HTMLInputElement>('[name="conn-host"]');
+    const portInput = card.querySelector<HTMLInputElement>('[name="conn-port"]');
+    const userInput = card.querySelector<HTMLInputElement>('[name="conn-user"]');
+    const authSelect = card.querySelector<HTMLSelectElement>('[name="conn-auth"]');
+    const keyInput = card.querySelector<HTMLInputElement>('[name="conn-keypath"]');
+    const projInput = card.querySelector<HTMLInputElement>('[name="conn-project"]');
+    const aiInput = card.querySelector<HTMLInputElement>('[name="conn-ai-cmd"]');
 
-    echoQueue = echoQueue
-      .then(async () => {
-        const resp: EchoResponse = await invoke("echo_key", { ch: data });
+    const host = hostInput?.value.trim() ?? "";
+    const user = userInput?.value.trim() ?? "";
+    const projectPath = projInput?.value.trim() ?? "";
 
-        await new Promise<void>((resolve) => {
-          term.write(resp.ch, () => {
-            requestAnimationFrame(() => {
-              requestAnimationFrame(() => {
-                resolve();
-              });
-            });
-          });
-        });
+    [hostInput, userInput, projInput].forEach((inp) => {
+      inp?.classList.remove("form-input-error");
+    });
 
-        const latencyMs = performance.now() - startedAt;
-        keystrokeLatency.record(latencyMs);
-        scheduleStatsUpdate();
-      })
-      .catch((err: unknown) => {
-        term.writeln(`\r\n[echo error] ${String(err)}`);
-      });
+    if (!host) { hostInput?.classList.add("form-input-error"); hasError = true; }
+    if (!user) { userInput?.classList.add("form-input-error"); hasError = true; }
+    if (!projectPath) { projInput?.classList.add("form-input-error"); hasError = true; }
+
+    const authMethod = (authSelect?.value ?? "ssh_config") as ConnectionConfig["auth_method"];
+    const keyPath = authMethod === "key" ? (keyInput?.value.trim() || null) : null;
+    const aiCmd = aiInput?.value.trim() || null;
+    const port = parseInt(portInput?.value ?? "22", 10) || 22;
+
+    connections.push({
+      host,
+      port,
+      user,
+      auth_method: authMethod,
+      key_path: keyPath,
+      project_path: projectPath,
+      ai_cli_command: aiCmd,
+    });
   });
+
+  if (hasError) {
+    showToast("Fill in all required connection fields", "error");
+    return null;
+  }
+
+  return {
+    name,
+    connections,
+    grid_layout: { preset, rows, cols },
+  };
 }
 
-async function wireTerminalOutput(): Promise<void> {
-  await listen<string>("terminal-output", (event) => {
-    outputBuffer += event.payload;
-    if (outputBuffer.length > 64 * 1024) {
-      scheduleOutputFlush();
+function showEmptyState(): void {
+  $("empty-state").style.display = "";
+  $("workset-detail").style.display = "none";
+  $("workset-form").style.display = "none";
+}
+
+function showDetailView(): void {
+  $("empty-state").style.display = "none";
+  $("workset-detail").style.display = "";
+  $("workset-form").style.display = "none";
+}
+
+function showFormView(): void {
+  $("empty-state").style.display = "none";
+  $("workset-detail").style.display = "none";
+  $("workset-form").style.display = "";
+}
+
+function highlightSelectedCard(): void {
+  const cards = document.querySelectorAll(".workset-card");
+  cards.forEach((card) => {
+    const el = card as HTMLElement;
+    if (el.dataset.id === selectedWorksetId) {
+      el.classList.add("selected");
     } else {
-      scheduleOutputFlush();
+      el.classList.remove("selected");
     }
-  });
-
-  await listen<{ flood_id: number; lines: number; elapsed_ms: number }>(
-    "terminal-flood-done",
-    (event) => {
-      if (!floodInProgress) return;
-      floodInProgress = false;
-      ( $("btn-flood") as HTMLButtonElement ).disabled = false;
-
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          const totalMs = performance.now() - floodStartAt;
-          floodLatency.record(totalMs);
-
-          const rustMs = floodRustSummary?.elapsed_ms;
-          const rustText = typeof rustMs === "number" ? rustMs.toFixed(1) : "n/a";
-          term.writeln(
-            `\r\nFlood complete: ${event.payload.lines} lines | ` +
-              `frontend=${totalMs.toFixed(1)}ms | rust=${rustText}ms`
-          );
-          scheduleStatsUpdate();
-        });
-      });
-    }
-  );
-}
-
-function wireControls(): void {
-  $("btn-flood").addEventListener("click", async () => {
-    const lines = parseInt(($("flood-lines") as HTMLInputElement).value, 10) || 10000;
-    keystrokeLatency.clear();
-    floodLatency.clear();
-    scheduleStatsUpdate();
-
-    if (floodInProgress) return;
-    floodInProgress = true;
-    ( $("btn-flood") as HTMLButtonElement ).disabled = true;
-    floodRustSummary = null;
-
-    term.writeln(`\r\nStarting ${lines}-line flood...`);
-    floodStartAt = performance.now();
-
-    invoke<FloodSummary>("start_flood", { lines })
-      .then((summary) => {
-        floodRustSummary = summary;
-      })
-      .catch((err: unknown) => {
-        floodInProgress = false;
-        ( $("btn-flood") as HTMLButtonElement ).disabled = false;
-        term.writeln(`\r\n[flood error] ${String(err)}`);
-      });
-  });
-
-  $("btn-stream").addEventListener("click", async () => {
-    const lines = parseInt(($("stream-lines") as HTMLInputElement).value, 10) || 100;
-    const delayMsRaw = parseInt(($("stream-delay") as HTMLInputElement).value, 10);
-    const delayMs = Number.isNaN(delayMsRaw) ? 50 : delayMsRaw;
-    const delayUs = Math.max(0, delayMs) * 1000;
-
-    term.writeln(`\r\nStarting stream: ${lines} lines, ${delayUs}us delay...`);
-    await invoke("start_stream", { lines, delayUs });
-    term.writeln("\r\nStream complete.");
-  });
-
-  $("btn-clear-stats").addEventListener("click", () => {
-    keystrokeLatency.clear();
-    floodLatency.clear();
-    scheduleStatsUpdate();
-  });
-
-  $("btn-clear-terminal").addEventListener("click", () => {
-    term.clear();
-  });
-
-  window.addEventListener("resize", () => {
-    fitAddon.fit();
   });
 }
 
-window.addEventListener("DOMContentLoaded", async () => {
-  initTerminal();
-  wireKeystrokeEcho();
-  await wireTerminalOutput();
-  wireControls();
+function renderWorksetList(summaries: WorksetSummary[]): void {
+  const container = $("workset-list");
+  if (summaries.length === 0) {
+    container.innerHTML = `<div class="sidebar-empty">No worksets yet.<br>Create one to get started.</div>`;
+    return;
+  }
+
+  container.innerHTML = summaries
+    .map(
+      (ws) =>
+        `<div class="workset-card${ws.id === selectedWorksetId ? " selected" : ""}" data-id="${escapeHtml(ws.id)}">
+          <div class="workset-card-name">${escapeHtml(ws.name)}</div>
+          <div class="workset-card-meta">
+            <span>${ws.connection_count} connection${ws.connection_count !== 1 ? "s" : ""}</span>
+            <span>${formatDate(ws.updated_at)}</span>
+          </div>
+        </div>`
+    )
+    .join("");
+
+  container.querySelectorAll(".workset-card").forEach((card) => {
+    card.addEventListener("click", () => {
+      const id = (card as HTMLElement).dataset.id;
+      if (id) selectWorkset(id);
+    });
+  });
+}
+
+function renderWorksetDetail(workset: Workset): void {
+  const container = $("workset-detail");
+  const gridLabel = workset.grid_layout.preset ?? `${workset.grid_layout.rows}x${workset.grid_layout.cols}`;
+
+  let connectionsHtml = "";
+  workset.connections.forEach((conn, i) => {
+    const authLabel =
+      conn.auth_method === "key"
+        ? "SSH Key"
+        : conn.auth_method === "password"
+          ? "Password"
+          : "SSH Config";
+
+    connectionsHtml += `
+      <div class="connection-detail-card">
+        <div class="connection-detail-header">Connection ${i + 1}: ${escapeHtml(conn.user)}@${escapeHtml(conn.host)}:${conn.port}</div>
+        <div class="connection-detail-row">
+          <span><span class="connection-detail-label">Auth:</span> ${authLabel}</span>
+          ${conn.key_path ? `<span><span class="connection-detail-label">Key:</span> ${escapeHtml(conn.key_path)}</span>` : ""}
+          <span><span class="connection-detail-label">Path:</span> ${escapeHtml(conn.project_path)}</span>
+          ${conn.ai_cli_command ? `<span><span class="connection-detail-label">AI CLI:</span> ${escapeHtml(conn.ai_cli_command)}</span>` : ""}
+        </div>
+      </div>`;
+  });
+
+  container.innerHTML = `
+    <div class="detail-header">
+      <div>
+        <h2>${escapeHtml(workset.name)}</h2>
+        <div class="detail-meta">
+          <span>Created ${formatDate(workset.created_at)}</span>
+          <span>Updated ${formatDate(workset.updated_at)}</span>
+        </div>
+      </div>
+      <div class="detail-header-actions">
+        <button class="btn btn-ghost" id="btn-edit-workset">Edit</button>
+        <button class="btn btn-danger" id="btn-delete-workset">Delete</button>
+      </div>
+    </div>
+    <div class="detail-section">
+      <div class="detail-section-title">Grid Layout</div>
+      <div class="detail-grid-info">
+        <strong>${escapeHtml(gridLabel)}</strong>
+        <span>${workset.grid_layout.rows} rows, ${workset.grid_layout.cols} cols</span>
+      </div>
+    </div>
+    <div class="detail-section">
+      <div class="detail-section-title">Connections (${workset.connections.length})</div>
+      ${connectionsHtml}
+    </div>`;
+
+  showDetailView();
+
+  $("btn-edit-workset").addEventListener("click", () => {
+    showEditForm(workset);
+  });
+  $("btn-delete-workset").addEventListener("click", () => {
+    deleteWorkset(workset.id);
+  });
+}
+
+function renderConnectionFormCard(index: number, conn?: ConnectionConfig): string {
+  const host = conn?.host ?? "";
+  const port = conn?.port ?? 22;
+  const user = conn?.user ?? "";
+  const auth = conn?.auth_method ?? "ssh_config";
+  const keyPath = conn?.key_path ?? "";
+  const projPath = conn?.project_path ?? "";
+  const aiCmd = conn?.ai_cli_command ?? "";
+  const keyDisplay = auth === "key" ? "" : "display:none;";
+
+  return `
+    <div class="connection-form-card">
+      <div class="connection-form-header">
+        <span>Connection ${index + 1}</span>
+        <button type="button" class="btn-ghost-danger btn-remove-conn">Remove</button>
+      </div>
+      <div class="form-row-3">
+        <div class="form-group">
+          <label class="form-label">Host *</label>
+          <input type="text" name="conn-host" class="form-input" placeholder="192.168.1.100" value="${escapeHtml(host)}" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Port</label>
+          <input type="number" name="conn-port" class="form-input" min="1" max="65535" value="${port}" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">User *</label>
+          <input type="text" name="conn-user" class="form-input" placeholder="ubuntu" value="${escapeHtml(user)}" />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Auth Method</label>
+          <select name="conn-auth" class="form-select">
+            <option value="ssh_config"${auth === "ssh_config" ? " selected" : ""}>SSH Config</option>
+            <option value="key"${auth === "key" ? " selected" : ""}>SSH Key</option>
+            <option value="password"${auth === "password" ? " selected" : ""}>Password</option>
+          </select>
+        </div>
+        <div class="form-group conn-keypath-group" style="${keyDisplay}">
+          <label class="form-label">Key Path</label>
+          <input type="text" name="conn-keypath" class="form-input" placeholder="~/.ssh/id_rsa" value="${escapeHtml(keyPath)}" />
+          <div class="form-hint">Path to SSH private key file</div>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Project Path *</label>
+          <input type="text" name="conn-project" class="form-input" placeholder="/home/user/project" value="${escapeHtml(projPath)}" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">AI CLI Command</label>
+          <input type="text" name="conn-ai-cmd" class="form-input" placeholder="claude" value="${escapeHtml(aiCmd)}" />
+          <div class="form-hint">Auto-launched in project directory</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderWorksetForm(workset?: Workset): void {
+  const container = $("workset-form");
+  const isEdit = !!workset;
+  const title = isEdit ? "Edit Workset" : "Create Workset";
+  const editId = workset?.id ?? "";
+
+  const name = workset?.name ?? "";
+  const preset = workset?.grid_layout.preset ?? "2x2";
+  const rows = workset?.grid_layout.rows ?? 2;
+  const cols = workset?.grid_layout.cols ?? 2;
+  const connections = workset?.connections ?? [];
+
+  const isCustom = !preset || !GRID_PRESETS[preset];
+
+  let presetOptions = Object.keys(GRID_PRESETS)
+    .map(
+      (key) =>
+        `<option value="${key}"${!isCustom && preset === key ? " selected" : ""}>${key}</option>`
+    )
+    .join("");
+  presetOptions += `<option value="custom"${isCustom ? " selected" : ""}>Custom</option>`;
+
+  const customDisplay = isCustom ? "" : "display:none;";
+  const initialConnections: Array<ConnectionConfig | undefined> =
+    connections.length > 0 ? connections : [undefined];
+  const connectionsHtml = initialConnections
+    .map((conn, i) => renderConnectionFormCard(i, conn))
+    .join("");
+
+  container.innerHTML = `
+    <form id="workset-crud-form" data-edit-id="${escapeHtml(editId)}">
+      <h3 class="form-title">${title}</h3>
+      <div class="form-group">
+        <label class="form-label">Workset Name *</label>
+        <input type="text" name="workset-name" class="form-input" placeholder="My Development Setup" value="${escapeHtml(name)}" />
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Grid Layout Preset</label>
+          <select name="grid-preset" class="form-select">${presetOptions}</select>
+        </div>
+        <div class="form-group custom-grid-fields" style="${customDisplay}">
+          <label class="form-label">Custom Grid</label>
+          <div style="display:flex;gap:8px;">
+            <input type="number" name="grid-rows" class="form-input" min="1" max="10" value="${rows}" placeholder="Rows" />
+            <input type="number" name="grid-cols" class="form-input" min="1" max="10" value="${cols}" placeholder="Cols" />
+          </div>
+        </div>
+      </div>
+      <div class="connections-header">
+        <div>
+          <span class="connections-title">Connections</span>
+          <span class="connections-count" id="conn-count">(${initialConnections.length}/10)</span>
+        </div>
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-add-connection">+ Add Connection</button>
+      </div>
+      <div id="connections-container">${connectionsHtml}</div>
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary">${isEdit ? "Save Changes" : "Create Workset"}</button>
+        <button type="button" class="btn btn-ghost" id="btn-cancel-form">Cancel</button>
+      </div>
+    </form>`;
+
+  showFormView();
+  wireFormEvents();
+}
+
+function showCreateForm(): void {
+  selectedWorksetId = null;
+  highlightSelectedCard();
+  renderWorksetForm();
+}
+
+function showEditForm(workset: Workset): void {
+  renderWorksetForm(workset);
+}
+
+function wireFormEvents(): void {
+  const form = document.getElementById("workset-crud-form") as HTMLFormElement | null;
+  if (!form) return;
+
+  form.addEventListener("submit", (e: Event) => {
+    e.preventDefault();
+    const editId = form.dataset.editId || null;
+    saveWorkset(form, editId || null);
+  });
+
+  const cancelBtn = document.getElementById("btn-cancel-form");
+  cancelBtn?.addEventListener("click", () => {
+    if (selectedWorksetId) {
+      selectWorkset(selectedWorksetId);
+    } else {
+      showEmptyState();
+    }
+  });
+
+  const presetSelect = form.querySelector<HTMLSelectElement>('[name="grid-preset"]');
+  const customFields = form.querySelector<HTMLElement>(".custom-grid-fields");
+  presetSelect?.addEventListener("change", () => {
+    if (customFields) {
+      customFields.style.display = presetSelect.value === "custom" ? "" : "none";
+    }
+  });
+
+  const addBtn = document.getElementById("btn-add-connection");
+  addBtn?.addEventListener("click", () => {
+    const container = document.getElementById("connections-container");
+    if (!container) return;
+    const count = container.querySelectorAll(".connection-form-card").length;
+    if (count >= 10) {
+      showToast("Maximum 10 connections allowed", "error");
+      return;
+    }
+    const temp = document.createElement("div");
+    temp.innerHTML = renderConnectionFormCard(count);
+    const card = temp.firstElementChild as HTMLElement;
+    container.appendChild(card);
+    wireConnectionCard(card);
+    updateConnectionCount();
+  });
+
+  form.querySelectorAll<HTMLElement>(".connection-form-card").forEach((card) => {
+    wireConnectionCard(card);
+  });
+}
+
+function wireConnectionCard(card: HTMLElement): void {
+  const removeBtn = card.querySelector<HTMLButtonElement>(".btn-remove-conn");
+  removeBtn?.addEventListener("click", () => {
+    const container = document.getElementById("connections-container");
+    if (!container) return;
+    const remaining = container.querySelectorAll(".connection-form-card").length;
+    if (remaining <= 1) {
+      showToast("At least one connection is required", "error");
+      return;
+    }
+    card.remove();
+    reindexConnections();
+    updateConnectionCount();
+  });
+
+  const authSelect = card.querySelector<HTMLSelectElement>('[name="conn-auth"]');
+  const keyGroup = card.querySelector<HTMLElement>(".conn-keypath-group");
+  authSelect?.addEventListener("change", () => {
+    if (keyGroup) {
+      keyGroup.style.display = authSelect.value === "key" ? "" : "none";
+    }
+  });
+}
+
+function reindexConnections(): void {
+  const container = document.getElementById("connections-container");
+  if (!container) return;
+  container.querySelectorAll<HTMLElement>(".connection-form-card").forEach((card, i) => {
+    const header = card.querySelector(".connection-form-header span");
+    if (header) header.textContent = `Connection ${i + 1}`;
+  });
+}
+
+function updateConnectionCount(): void {
+  const container = document.getElementById("connections-container");
+  const countEl = document.getElementById("conn-count");
+  if (!container || !countEl) return;
+  const count = container.querySelectorAll(".connection-form-card").length;
+  countEl.textContent = `(${count}/10)`;
+}
+
+function wireSearch(): void {
+  const searchInput = document.getElementById("workset-search") as HTMLInputElement | null;
+  searchInput?.addEventListener("input", () => {
+    const query = searchInput.value.trim().toLowerCase();
+    if (!query) {
+      renderWorksetList(allSummaries);
+      return;
+    }
+    const filtered = allSummaries.filter((ws) =>
+      ws.name.toLowerCase().includes(query)
+    );
+    renderWorksetList(filtered);
+  });
+}
+
+window.addEventListener("DOMContentLoaded", () => {
+  loadWorksets();
+  wireSearch();
+
+  $("btn-new-workset").addEventListener("click", () => {
+    showCreateForm();
+  });
+
+  const emptyCreateBtn = document.getElementById("btn-empty-create");
+  emptyCreateBtn?.addEventListener("click", () => {
+    showCreateForm();
+  });
 });

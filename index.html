@@ -4,56 +4,31 @@
     <meta charset="UTF-8" />
     <link rel="stylesheet" href="/src/styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SPIKE-1: Tauri + xterm.js Latency</title>
+    <title>Multi-VM Workspace</title>
     <script type="module" src="/src/main.ts" defer></script>
   </head>
 
   <body>
     <div id="app">
-      <header id="controls">
-        <h1>SPIKE-1 Latency Bench</h1>
-
-        <div class="control-row">
-          <label>Flood:
-            <input id="flood-lines" type="number" value="10000" min="1" max="100000" />
-            lines
-          </label>
-          <button id="btn-flood">Run Flood</button>
+      <aside id="sidebar">
+        <div class="sidebar-header">
+          <h2>Worksets</h2>
+          <button id="btn-new-workset" class="btn btn-primary btn-sm">+ New</button>
         </div>
-
-        <div class="control-row">
-          <label>Stream:
-            <input id="stream-lines" type="number" value="100" min="1" max="10000" />
-            lines,
-            <input id="stream-delay" type="number" value="50" min="0" max="5000" />
-            ms delay
-          </label>
-          <button id="btn-stream">Run Stream</button>
+        <input id="workset-search" type="text" placeholder="Search worksets..." />
+        <div id="workset-list"></div>
+      </aside>
+      <main id="main-content">
+        <div id="empty-state">
+          <div class="empty-state-inner">
+            <h2>Multi-VM Workspace</h2>
+            <p>Select a workset or create a new one to get started.</p>
+            <button id="btn-empty-create" class="btn btn-primary">Create Workset</button>
+          </div>
         </div>
-
-        <div class="control-row">
-          <button id="btn-clear-stats">Clear Stats</button>
-          <button id="btn-clear-terminal">Clear Terminal</button>
-        </div>
-      </header>
-
-      <section id="stats-panel">
-        <div class="stat-block">
-          <span class="stat-label">Renderer:</span>
-          <span id="renderer-info">detecting...</span>
-        </div>
-        <div class="stat-block">
-          <span class="stat-label">Keystroke latency:</span>
-          <span id="keystroke-stats">no samples</span>
-          <span class="stat-hint">(<span id="sample-count">0</span> samples)</span>
-        </div>
-        <div class="stat-block">
-          <span class="stat-label">Flood timing:</span>
-          <span id="flood-stats">no samples</span>
-        </div>
-      </section>
-
-      <main id="terminal-container"></main>
+        <div id="workset-detail" style="display:none"></div>
+        <div id="workset-form" style="display:none"></div>
+      </main>
     </div>
   </body>
 </html>

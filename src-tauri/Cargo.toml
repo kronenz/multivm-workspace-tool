@@ -1,7 +1,7 @@
 [package]
 name = "multivm-workspace-tool"
 version = "0.1.0"
-description = "SPIKE-1: Tauri + xterm.js latency verification prototype"
+description = "Multi-VM AI Agent Workspace Tool"
 authors = ["you"]
 edition = "2021"
 
@@ -18,6 +18,8 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["time"] }
+uuid = { version = "1", features = ["v4"] }
+dirs = "6"
 
 # SPIKE-2: SSH stress-test harness dependencies
 ssh2 = "0.9"
@@ -27,4 +29,3 @@ chrono = { version = "0.4", features = ["serde"] }
 [[bin]]
 name = "spike_2_ssh_harness"
 path = "src/bin/spike_2_ssh_harness.rs"
-

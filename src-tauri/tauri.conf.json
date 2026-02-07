@@ -13,9 +13,9 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "SPIKE-1: Tauri + xterm.js Latency",
-        "width": 1200,
-        "height": 800
+        "title": "Multi-VM Workspace",
+        "width": 1400,
+        "height": 900
       }
     ],
     "security": {
