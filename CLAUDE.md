@@ -41,4 +41,4 @@
 - 아키텍처: `docs/engineering/architecture.md` (C4 다이어그램, 9 컴포넌트, 3 ADR)
 - MVP 기능: `docs/qa/mvp-spec.md` (10 기능, 138 체크박스, E2E 시나리오)
 - 경쟁 분석: `docs/product/market-research.md` (8 경쟁사, 4 시장 공백)
-- 제품 요구사항: `docs/product/prd.md` (2 페르소나, MoSCoW 우선순위)
+- 제품 요구사항: `docs/product/prd.md` (2 페르소나, MoSCoW 우선순위)ㅇ

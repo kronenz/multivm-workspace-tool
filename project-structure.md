@@ -1,7 +1,7 @@
 # Project Structure — Multi-VM AI Agent Workspace Tool
 
 > Last Updated: 2026-02-07
-> Version: 1.0
+> Version: 2.0
 
 ---
 
@@ -19,9 +19,9 @@
 
 ## 2. Current Project Phase
 
-**Planning Complete → 기술 스파이크 대기 중**
+**MVP Feature 1–4 구현 완료 → Feature 5–10 구현 예정**
 
-현재 프로젝트는 코드 구현 전 단계이며, 5개 기획 문서가 완성되어 있다. 코드 구현은 기술 스파이크(SPIKE-1/2/3) 완료 후 시작한다.
+SPIKE 검증 완료 후 MVP 구현 진행 중. Feature 1(Workset CRUD) + Feature 2(SSH) + Feature 3(Terminal) + Feature 4(Grid Layout) E2E 동작 확인.
 
 ### Phase 로드맵
 
@@ -29,17 +29,22 @@
 ✅ Phase 0: Planning
    └── 5개 기획 문서 완성 (glossary, market-research, prd, architecture, mvp-spec)
 
-⬜ Phase 1: Technical Spikes (Weeks 1-2)
-   ├── SPIKE-1: Tauri + xterm.js latency 검증 [CRITICAL]
-   ├── SPIKE-2: SSH 연결 풀링 스트레스 테스트 [HIGH]
-   └── SPIKE-3: 이기종 VM 리소스 수집 호환성 [MEDIUM]
+✅ Phase 1: Technical Spikes
+   ├── SPIKE-1: Tauri + xterm.js latency 검증 — PASS
+   ├── SPIKE-2: SSH 연결 풀링 스트레스 테스트 — PASS
+   └── SPIKE-3: 이기종 VM 리소스 수집 호환성 [MEDIUM] — 미실행
 
-⬜ Phase 2: MVP Development (Sprints 1-5)
-   ├── Sprint 1: SSH Connection Manager + Terminal Emulator
-   ├── Sprint 2: Workset Manager + Grid Layout
-   ├── Sprint 3: File Browser + Markdown Viewer
-   ├── Sprint 4: Resource Monitoring + AI CLI Auto-Launch
-   └── Sprint 5: Auto-Reconnect + Theme + Polish
+🔨 Phase 2: MVP Development
+   ├── ✅ Feature 1: Workset Profile Management (CRUD)
+   ├── ✅ Feature 2: SSH Connection (Key/Password)
+   ├── ✅ Feature 3: Terminal Emulator (xterm.js, 256-color)
+   ├── ✅ Feature 4: Grid Layout (5 presets: 1x1, 2x1, 2x2, 2x3, 3x2)
+   ├── ⬜ Feature 5: File Browser (Read-Only)
+   ├── ⬜ Feature 6: Markdown Viewer
+   ├── ⬜ Feature 7: Resource Monitoring (CPU/RAM/Disk)
+   ├── ⬜ Feature 8: AI CLI Auto-Launch
+   ├── ⬜ Feature 9: SSH Auto-Reconnect
+   └── ⬜ Feature 10: Dark/Light Theme
 
 ⬜ Phase 3: QA & Release
    ├── 138개 Done Criteria 체크박스 검증
@@ -51,146 +56,97 @@
 
 ## 3. Folder Structure
 
-### 현재 구조 (Planning Phase)
-
-```
-multivm-workspace-tool/
-├── CLAUDE.md                    # AI 에이전트 설정 (프로젝트 규칙)
-├── AGENTS.md                    # 프로젝트 지식 베이스
-├── project-structure.md         # 프로젝트 구조 정의 (본 문서)
-├── README.md                    # 프로젝트 소개 및 개요
-├── CONTRIBUTING.md              # 기여 가이드
-├── LICENSE-MIT                  # MIT 라이선스
-├── LICENSE-APACHE               # Apache 2.0 라이선스
-├── .gitignore                   # Git 무시 규칙
-│
-└── docs/                        # 기획 문서 모음
-    ├── README.md                # 문서 네비게이션 가이드
-    ├── glossary.md              # 용어 정의 (23개 핵심 용어)
-    ├── product/
-    │   ├── market-research.md   # 경쟁 분석 (8개 1차 + 4개 인접 경쟁사)
-    │   └── prd.md               # 제품 요구사항 (2 페르소나, 8 MUST, MoSCoW)
-    ├── engineering/
-    │   └── architecture.md      # 아키텍처 블루프린트 (C4 다이어그램, 9 컴포넌트, 3 ADR)
-    └── qa/
-        └── mvp-spec.md          # MVP 사양 (10 기능, 10 제외, 138 체크박스)
-```
-
-### 향후 구현 시 예상 구조
+### 현재 구조 (MVP Feature 1–4 구현 완료)
 
 ```
 multivm-workspace-tool/
 │
 │  ┌─── 프로젝트 메타 ─────────────────────────────────────────┐
 │  │                                                            │
-├── CLAUDE.md                    # AI 에이전트 설정
+├── CLAUDE.md                    # AI 에이전트 설정 (프로젝트 규칙)
 ├── AGENTS.md                    # 프로젝트 지식 베이스
 ├── project-structure.md         # 프로젝트 구조 정의 (본 문서)
 ├── README.md                    # 프로젝트 소개 및 개요
 ├── CONTRIBUTING.md              # 기여 가이드
-├── LICENSE-MIT                  # MIT 라이선스
-├── LICENSE-APACHE               # Apache 2.0 라이선스
+├── LICENSE-MIT / LICENSE-APACHE  # 듀얼 라이선스
 ├── .gitignore                   # Git 무시 규칙
 │  │                                                            │
 │  └────────────────────────────────────────────────────────────┘
 │
-│  ┌─── 기획 문서 ──────────────────────────────────────────────┐
+│  ┌─── 빌드 설정 ──────────────────────────────────────────────┐
 │  │                                                            │
-├── docs/                        # 기획 문서 모음
-│   ├── README.md                # 문서 네비게이션 가이드
-│   ├── glossary.md              # 용어 정의
-│   ├── product/
-│   │   ├── market-research.md   # 경쟁 분석
-│   │   └── prd.md               # 제품 요구사항
-│   ├── engineering/
-│   │   └── architecture.md      # 아키텍처 블루프린트
-│   └── qa/
-│       └── mvp-spec.md          # MVP 사양
+├── package.json                 # Node.js 의존성 (@xterm/xterm, @xterm/addon-webgl, @xterm/addon-fit)
+├── tsconfig.json                # TypeScript 설정
+├── vite.config.ts               # Vite 빌드 설정
+├── index.html                   # Tauri WebView 진입점 (workspace-view 포함)
+│  │                                                            │
+│  └────────────────────────────────────────────────────────────┘
+│
+│  ┌─── Web Frontend (Sandboxed WebView) — vanilla TypeScript ──┐
+│  │                                                            │
+├── src/
+│   ├── main.ts                  # 앱 진입점 (~770줄) — Workset CRUD UI + Workspace 활성화 + E2E IPC
+│   ├── styles.css               # 글로벌 스타일 (~670줄) — 다크 테마 + grid/pane/toolbar CSS
+│   ├── grid.ts                  # Grid Layout Engine (96줄) — 5개 프리셋, CSS Grid, 레이아웃 툴바
+│   ├── terminal.ts              # Terminal Emulator (79줄) — xterm.js WebGL/Canvas, FitAddon
+│   ├── workspace.ts             # Grid-Terminal 통합 (206줄) — OutputBuffer(rAF), ResizeObserver
+│   └── vite-env.d.ts            # Vite 타입 선언
 │  │                                                            │
 │  └────────────────────────────────────────────────────────────┘
 │
 │  ┌─── Rust Core (Trusted Zone) ───────────────────────────────┐
 │  │                                                            │
-├── src-tauri/                   # Tauri Backend
-│   ├── src/
-│   │   ├── main.rs              # Tauri 앱 진입점
-│   │   ├── lib.rs               # 모듈 선언
-│   │   │
-│   │   ├── ssh/                 # SSH Connection Manager
-│   │   │   ├── mod.rs           #   모듈 루트
-│   │   │   ├── connection.rs    #   SSH 연결 수립/종료
-│   │   │   ├── pool.rs          #   연결 풀링/채널 멀티플렉싱
-│   │   │   ├── auth.rs          #   인증 (키/비밀번호/config)
-│   │   │   └── reconnect.rs     #   자동 재접속 로직
-│   │   │
-│   │   ├── process/             # Process Manager
-│   │   │   ├── mod.rs
-│   │   │   ├── pty.rs           #   PTY 세션 관리
-│   │   │   └── launcher.rs      #   AI CLI 자동 실행
-│   │   │
-│   │   ├── resource/            # Resource Poller
-│   │   │   ├── mod.rs
-│   │   │   ├── poller.rs        #   주기적 SSH exec 실행
-│   │   │   └── parser.rs        #   OS별 출력 파싱 (Linux/macOS/Alpine)
-│   │   │
-│   │   ├── workset/             # Workset Store
-│   │   │   ├── mod.rs
-│   │   │   ├── model.rs         #   Workset 데이터 모델
-│   │   │   └── store.rs         #   JSON CRUD 영속화
-│   │   │
-│   │   ├── file_access/         # File Access Layer
-│   │   │   ├── mod.rs
-│   │   │   ├── sftp.rs          #   SFTP 기반 파일 접근
-│   │   │   └── exec.rs          #   SSH exec 기반 파일 접근
-│   │   │
-│   │   └── ipc/                 # IPC Command Handlers
-│   │       ├── mod.rs
-│   │       ├── commands.rs      #   Tauri Commands 정의
-│   │       └── events.rs        #   Tauri Events 정의
-│   │
-│   ├── Cargo.toml               # Rust 의존성
-│   └── tauri.conf.json          # Tauri 앱 설정
+├── src-tauri/
+│   ├── Cargo.toml               # Rust 의존성 (ssh2, tokio, uuid, dirs, serde_json, chrono)
+│   ├── tauri.conf.json          # Tauri 앱 설정
+│   ├── capabilities/            # Tauri v2 Capability 정의
+│   └── src/
+│       ├── main.rs              # Tauri 앱 진입점
+│       ├── lib.rs               # IPC Commands (179줄) — 9개 명령 + SSH state 등록
+│       │
+│       ├── workset/             # ✅ Workset Store (Feature 1)
+│       │   └── mod.rs           #   데이터 모델 + JSON CRUD + Validation (420줄)
+│       │
+│       ├── ssh/                 # ✅ SSH Connection Manager (Feature 2)
+│       │   ├── mod.rs           #   SshConnectionManager — connect_all, disconnect_all (127줄)
+│       │   └── session.rs       #   SSH Session Worker — PTY, keepalive, events (328줄)
+│       │
+│       └── bin/
+│           └── spike_2_ssh_harness.rs  # SPIKE-2 테스트 하네스
 │  │                                                            │
 │  └────────────────────────────────────────────────────────────┘
 │
-│  ┌─── Web Frontend (Sandboxed WebView) ───────────────────────┐
+│  ┌─── 기획 문서 ──────────────────────────────────────────────┐
 │  │                                                            │
-├── src/                         # Web Frontend
-│   ├── components/
-│   │   ├── grid/                # Grid Layout Engine
-│   │   │   ├── GridContainer.tsx
-│   │   │   ├── Pane.tsx
-│   │   │   └── Divider.tsx
-│   │   │
-│   │   ├── terminal/            # Terminal Emulator (xterm.js)
-│   │   │   ├── TerminalPane.tsx
-│   │   │   └── useTerminal.ts
-│   │   │
-│   │   ├── file-browser/        # File Browser UI
-│   │   │   ├── FileBrowser.tsx
-│   │   │   └── FileTree.tsx
-│   │   │
-│   │   ├── markdown-viewer/     # Markdown Viewer UI
-│   │   │   └── MarkdownViewer.tsx
-│   │   │
-│   │   ├── resource-monitor/    # Resource Monitor UI
-│   │   │   └── ResourceBar.tsx
-│   │   │
-│   │   └── workset/             # Workset Manager UI
-│   │       ├── WorksetSidebar.tsx
-│   │       └── WorksetForm.tsx
-│   │
-│   ├── hooks/                   # Shared React Hooks
-│   ├── utils/                   # 유틸리티 함수
-│   ├── types/                   # TypeScript 타입 정의
-│   ├── App.tsx                  # 앱 루트 컴포넌트
-│   └── main.tsx                 # 앱 진입점
+├── docs/
+│   ├── README.md                # 문서 네비게이션 가이드
+│   ├── glossary.md              # 용어 정의 (23개 핵심 용어)
+│   ├── product/
+│   │   ├── market-research.md   # 경쟁 분석 (8개 1차 + 4개 인접 경쟁사)
+│   │   └── prd.md               # 제품 요구사항 (2 페르소나, 8 MUST, MoSCoW)
+│   ├── engineering/
+│   │   ├── architecture.md      # 아키텍처 블루프린트 (C4, 9 컴포넌트, 3 ADR)
+│   │   ├── spike-1-tauri-xterm-latency.md   # SPIKE-1 결과 리포트
+│   │   └── spike-2-ssh-pooling-stress.md    # SPIKE-2 결과 리포트
+│   └── qa/
+│       └── mvp-spec.md          # MVP 사양 (10 기능, 10 제외, 138 체크박스)
 │  │                                                            │
 │  └────────────────────────────────────────────────────────────┘
-│
-├── package.json                 # Node.js 의존성
-├── tsconfig.json                # TypeScript 설정
-└── vite.config.ts               # Vite 빌드 설정
+```
+
+### 미구현 모듈 (Feature 5–10에서 추가 예정)
+
+```
+src-tauri/src/
+├── process/             # Process Manager (Feature 8: AI CLI Auto-Launch)
+├── resource/            # Resource Poller (Feature 7: CPU/RAM/Disk)
+├── file_access/         # File Access Layer (Feature 5: File Browser)
+└── ssh/reconnect.rs     # SSH Auto-Reconnect (Feature 9)
+
+src/
+├── (file-browser)       # File Browser UI (Feature 5)
+├── (markdown-viewer)    # Markdown Viewer UI (Feature 6)
+└── (resource-monitor)   # Resource Monitor UI (Feature 7)
 ```
 
 ---
@@ -211,22 +167,21 @@ Tauri의 Trust Boundary 모델에 따라, 코드 작성 시 반드시 아래 규
 
 ### 4.2 Code Ownership
 
-구현 시 각 디렉토리의 주요 기술 영역:
+각 디렉토리/파일의 주요 기술 영역:
 
-| 디렉토리 | 기술 | 책임 범위 |
-|----------|------|----------|
-| `src-tauri/src/ssh/` | Rust + SSH Library | SSH 연결, 인증, 재접속, 채널 관리 |
-| `src-tauri/src/process/` | Rust | PTY 관리, AI CLI 실행 |
-| `src-tauri/src/resource/` | Rust | CPU/RAM/Disk 수집, OS별 파싱 |
-| `src-tauri/src/workset/` | Rust + JSON | Workset CRUD, 영속화 |
-| `src-tauri/src/file_access/` | Rust + SFTP | 원격 파일 시스템 읽기 |
-| `src-tauri/src/ipc/` | Rust + Tauri | Command/Event 핸들러 |
-| `src/components/grid/` | TypeScript/React | Grid Layout 렌더링, 리사이즈 |
-| `src/components/terminal/` | TypeScript + xterm.js | 터미널 UI, WebGL 렌더링 |
-| `src/components/file-browser/` | TypeScript/React | 파일 트리 뷰 |
-| `src/components/markdown-viewer/` | TypeScript/React | MD 렌더링, 구문 강조 |
-| `src/components/resource-monitor/` | TypeScript/React | CPU/RAM/Disk 표시 |
-| `src/components/workset/` | TypeScript/React | Workset 사이드바, CRUD 폼 |
+| 디렉토리/파일 | 기술 | 책임 범위 | 상태 |
+|--------------|------|----------|------|
+| `src-tauri/src/lib.rs` | Rust + Tauri | IPC Commands 정의, state 등록 | ✅ |
+| `src-tauri/src/workset/` | Rust + JSON | Workset CRUD, Validation, 영속화 | ✅ |
+| `src-tauri/src/ssh/` | Rust + ssh2 | SSH 연결, PTY, keepalive, events | ✅ |
+| `src-tauri/src/process/` | Rust | AI CLI 자동 실행, PTY 관리 | ⬜ |
+| `src-tauri/src/resource/` | Rust | CPU/RAM/Disk 수집, OS별 파싱 | ⬜ |
+| `src-tauri/src/file_access/` | Rust + SFTP | 원격 파일 시스템 읽기 | ⬜ |
+| `src/main.ts` | TypeScript | Workset CRUD UI, 워크스페이스 활성화, E2E IPC | ✅ |
+| `src/grid.ts` | TypeScript | CSS Grid 레이아웃, 5개 프리셋, 툴바 | ✅ |
+| `src/terminal.ts` | TypeScript + xterm.js | 터미널 UI, WebGL 렌더링 | ✅ |
+| `src/workspace.ts` | TypeScript | Grid-Terminal 통합, OutputBuffer, ResizeObserver | ✅ |
+| `src/styles.css` | CSS | 다크 테마, Grid/Pane/Toolbar 스타일 | ✅ |
 
 ### 4.3 Naming Conventions
 
@@ -290,34 +245,41 @@ PRD 요구사항 → Architecture 컴포넌트 → MVP 기능의 완전한 매�
 
 ### IPC 명령/이벤트 요약
 
-**Commands (Frontend → Rust Core)**:
+**Commands (Frontend → Rust Core)** — 구현 완료:
 
-| Command | Source Component | Target Component | Description |
-|---------|-----------------|-----------------|-------------|
-| `connect_ssh` | Workset Manager UI | SSH Connection Manager | SSH 연결 수립 |
-| `disconnect_ssh` | Workset Manager UI | SSH Connection Manager | SSH 연결 종료 |
-| `terminal_input` | Terminal Emulator UI | Process Manager | 키 입력 전달 |
-| `terminal_resize` | Terminal Emulator UI | Process Manager | 터미널 크기 변경 |
-| `list_directory` | File Browser UI | File Access Layer | 디렉토리 목록 요청 |
-| `read_file` | Markdown Viewer UI | File Access Layer | 파일 내용 읽기 |
-| `activate_workset` | Workset Manager UI | Workset Store | Workset 활성화 |
-| `create_workset` | Workset Manager UI | Workset Store | Workset 생성 |
-| `update_workset` | Workset Manager UI | Workset Store | Workset 수정 |
-| `delete_workset` | Workset Manager UI | Workset Store | Workset 삭제 |
-| `list_worksets` | Workset Manager UI | Workset Store | Workset 목록 조회 |
-| `save_layout` | Grid Layout Engine | Workset Store | 레이아웃 저장 |
-| `start_polling` | Workset Manager | Resource Poller | 리소스 수집 시작 |
-| `stop_polling` | Workset Manager | Resource Poller | 리소스 수집 중지 |
+| Command | Source | Target | Description | 상태 |
+|---------|--------|--------|-------------|------|
+| `list_worksets` | Workset UI | Workset Store | Workset 목록 조회 | ✅ |
+| `get_workset` | Workset UI | Workset Store | 단건 조회 | ✅ |
+| `create_workset` | Workset UI | Workset Store | Workset 생성 | ✅ |
+| `update_workset` | Workset UI | Workset Store | Workset 수정 | ✅ |
+| `delete_workset` | Workset UI | Workset Store | Workset 삭제 | ✅ |
+| `activate_workset` | Workspace | SSH Manager | Workset 활성화 → SSH 연결 → PTY | ✅ |
+| `deactivate_workset` | Workspace | SSH Manager | 모든 SSH 세션 종료 | ✅ |
+| `terminal_input` | Terminal UI | SSH Session | 키 입력 전달 | ✅ |
+| `terminal_resize` | Terminal UI | SSH Session | 터미널 크기 변경 | ✅ |
 
-**Events (Rust Core → Frontend)**:
+**Commands — 미구현:**
 
-| Event | Source Component | Target Component | Description |
-|-------|-----------------|-----------------|-------------|
-| `terminal_output` | Process Manager | Terminal Emulator UI | PTY 출력 스트리밍 |
-| `ssh_state_changed` | SSH Connection Manager | Workset Manager UI | 연결 상태 변경 |
-| `resource_update` | Resource Poller | Resource Monitor UI | CPU/RAM/Disk 데이터 |
-| `process_exited` | Process Manager | Terminal Emulator UI | 프로세스 종료 알림 |
-| `file_content_updated` | File Access Layer | Markdown Viewer UI | 파일 변경 감지 |
+| Command | Description | Feature |
+|---------|-------------|---------|
+| `list_directory` | 디렉토리 목록 요청 | Feature 5 |
+| `read_file` | 파일 내용 읽기 | Feature 5/6 |
+| `start_polling` / `stop_polling` | 리소스 수집 시작/중지 | Feature 7 |
+
+**Events (Rust Core → Frontend)** — 구현 완료:
+
+| Event | Source | Target | Description | 상태 |
+|-------|--------|--------|-------------|------|
+| `terminal-output-{session_id}` | SSH Session | Terminal UI | PTY 출력 (Vec<u8> as JSON) | ✅ |
+| `session-status-{session_id}` | SSH Session | Workspace UI | 연결 상태 변경 | ✅ |
+
+**Events — 미구현:**
+
+| Event | Description | Feature |
+|-------|-------------|---------|
+| `resource_update` | CPU/RAM/Disk 데이터 | Feature 7 |
+| `process_exited` | 프로세스 종료 알림 | Feature 8 |
 
 ---
 
@@ -394,4 +356,5 @@ AI 에이전트가 이 프로젝트를 이해하기 위한 권장 순서:
 
 | Date | Version | Changes |
 |------|---------|---------|
+| 2026-02-07 | 2.0 | MVP Feature 1–4 구현 완료 반영. 폴더 구조, Phase 로드맵, IPC 명령/이벤트, Code Ownership 갱신 |
 | 2026-02-07 | 1.0 | 현재 프로젝트(Multi-VM Workspace Tool)에 맞게 전면 재작성. 기존 TeamKnowledge Vault 내용 제거 |

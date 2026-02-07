@@ -1,7 +1,7 @@
 # AGENTS.md — Multi-VM AI Agent Workspace Tool
 
 > Last Updated: 2026-02-07
-> Status: SPIKE 검증 완료, MVP 구현 준비 중
+> Status: MVP Feature 1–4 구현 완료 (Workset CRUD + SSH + Terminal + Grid)
 
 ---
 
@@ -11,7 +11,7 @@
 
 **핵심 가치**: 10개 이상의 터미널 창을 하나의 통합 워크스페이스로 대체. Workset 프로필 하나로 SSH 접속 → 프로젝트 폴더 이동 → AI CLI 자동 실행 → Grid Layout 복원을 한 번에 수행.
 
-**현재 상태**: SPIKE 검증 완료 — SPIKE-1(빌드/통합 PASS), SPIKE-2(SSH 10세션 PASS). MVP 구현 준비 중.
+**현재 상태**: MVP Feature 1–4 구현 완료. Workset CRUD + SSH 연결 + 터미널 에뮬레이터 + Grid Layout이 E2E로 동작. Feature 5–10 구현 예정.
 
 **라이선스**: MIT / Apache 2.0 (듀얼 라이선스)
 
@@ -86,6 +86,34 @@ multivm-workspace-tool/
 ├── LICENSE-APACHE               # Apache 2.0 라이선스
 ├── .gitignore                   # Git 무시 규칙
 │
+├── package.json                 # Node.js 의존성 (@xterm/xterm, @xterm/addon-webgl, @xterm/addon-fit)
+├── tsconfig.json                # TypeScript 설정
+├── vite.config.ts               # Vite 빌드 설정
+├── index.html                   # Tauri WebView 진입점
+│
+├── src/                         # Web Frontend (TypeScript, vanilla)
+│   ├── main.ts                  # 앱 진입점 — Workset CRUD UI + Workspace activation + E2E IPC wiring (~770줄)
+│   ├── styles.css               # 다크 테마 전체 스타일 (~670줄)
+│   ├── grid.ts                  # Grid Layout Engine — 5 presets, CSS Grid, layout toolbar (96줄)
+│   ├── terminal.ts              # Terminal Emulator — xterm.js WebGL/Canvas, FitAddon (79줄)
+│   ├── workspace.ts             # Grid-Terminal integration — OutputBuffer, ResizeObserver (206줄)
+│   └── vite-env.d.ts            # Vite 타입 선언
+│
+├── src-tauri/                   # Rust Core (Tauri backend)
+│   ├── Cargo.toml               # Rust 의존성 (ssh2, tokio, uuid, dirs, serde_json, chrono)
+│   ├── tauri.conf.json          # Tauri 앱 설정
+│   ├── capabilities/            # Tauri v2 capabilities 설정
+│   └── src/
+│       ├── main.rs              # Tauri 앱 진입점
+│       ├── lib.rs               # 모듈 선언 + 9개 IPC Commands (179줄)
+│       ├── workset/             # Workset Store
+│       │   └── mod.rs           #   데이터 모델 + JSON CRUD 영속화 (420줄)
+│       ├── ssh/                 # SSH Connection Manager
+│       │   ├── mod.rs           #   SshConnectionManager — connect_all, disconnect_all (127줄)
+│       │   └── session.rs       #   SSH session worker thread — PTY, keepalive, events (328줄)
+│       └── bin/
+│           └── spike_2_ssh_harness.rs  # SPIKE-2 테스트 하네스
+│
 └── docs/                        # 기획 문서 모음
     ├── README.md                # 문서 네비게이션 가이드
     ├── glossary.md              # 용어 정의 (23개 핵심 용어)
@@ -96,37 +124,6 @@ multivm-workspace-tool/
     │   └── architecture.md      # 아키텍처 블루프린트 (C4 다이어그램, 9 컴포넌트, 3 ADR)
     └── qa/
         └── mvp-spec.md          # MVP 사양 (10 기능, 10 제외, 138 체크박스)
-```
-
-### 향후 구현 시 예상 구조
-
-```
-multivm-workspace-tool/
-├── src-tauri/                   # Rust Core (Tauri backend)
-│   ├── src/
-│   │   ├── main.rs              # Tauri 앱 진입점
-│   │   ├── ssh/                 # SSH Connection Manager
-│   │   ├── process/             # Process Manager
-│   │   ├── resource/            # Resource Poller
-│   │   ├── workset/             # Workset Store
-│   │   ├── file_access/         # File Access Layer
-│   │   └── ipc/                 # IPC Command handlers
-│   ├── Cargo.toml
-│   └── tauri.conf.json
-│
-├── src/                         # Web Frontend
-│   ├── components/
-│   │   ├── grid/                # Grid Layout Engine
-│   │   ├── terminal/            # Terminal Emulator (xterm.js)
-│   │   ├── file-browser/        # File Browser UI
-│   │   ├── markdown-viewer/     # Markdown Viewer UI
-│   │   ├── resource-monitor/    # Resource Monitor UI
-│   │   └── workset/             # Workset Manager UI
-│   ├── App.tsx
-│   └── main.tsx
-│
-├── package.json
-└── tsconfig.json
 ```
 
 ---
@@ -143,18 +140,18 @@ multivm-workspace-tool/
 
 ## 6. MVP Features (10개)
 
-| # | Feature | PRD Mapping | Architecture Component |
-|---|---------|-------------|----------------------|
-| 1 | Workset Profile Management (CRUD) | MUST-1 | Workset Manager |
-| 2 | SSH Connection (Key/Password/Config) | MUST-2 | SSH Connection Manager |
-| 3 | Terminal Emulator (xterm.js, 256-color) | MUST-3 | Terminal Emulator |
-| 4 | Grid Layout (1x1, 2x1, 2x2 + Custom) | MUST-4 | Grid Layout Engine |
-| 5 | File Browser (Read-Only) | MUST-5 | File Browser |
-| 6 | Markdown Viewer | MUST-6 | Markdown Renderer |
-| 7 | Resource Monitoring (CPU/RAM/Disk) | MUST-7 | Resource Poller |
-| 8 | AI CLI Auto-Launch | MUST-8 | Process Manager |
-| 9 | SSH Auto-Reconnect | MUST-2 enhanced | SSH Connection Manager |
-| 10 | Dark/Light Theme | SHOULD-1 promoted | Frontend |
+| # | Feature | PRD Mapping | Architecture Component | Status |
+|---|---------|-------------|----------------------|--------|
+| 1 | Workset Profile Management (CRUD) | MUST-1 | Workset Manager | ✅ 완료 |
+| 2 | SSH Connection (Key/Password) | MUST-2 | SSH Connection Manager | ✅ 완료 |
+| 3 | Terminal Emulator (xterm.js, 256-color) | MUST-3 | Terminal Emulator | ✅ 완료 |
+| 4 | Grid Layout (1x1, 2x1, 2x2, 2x3, 3x2) | MUST-4 | Grid Layout Engine | ✅ 완료 |
+| 5 | File Browser (Read-Only) | MUST-5 | File Browser | ⬜ 미구현 |
+| 6 | Markdown Viewer | MUST-6 | Markdown Renderer | ⬜ 미구현 |
+| 7 | Resource Monitoring (CPU/RAM/Disk) | MUST-7 | Resource Poller | ⬜ 미구현 |
+| 8 | AI CLI Auto-Launch | MUST-8 | Process Manager | ⬜ 미구현 |
+| 9 | SSH Auto-Reconnect | MUST-2 enhanced | SSH Connection Manager | ⬜ 미구현 |
+| 10 | Dark/Light Theme | SHOULD-1 promoted | Frontend | ⬜ 미구현 |
 
 ---
 
