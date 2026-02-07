@@ -30,7 +30,30 @@
         <div id="workset-form" style="display:none"></div>
         <div id="workspace-view">
           <div id="layout-toolbar" class="layout-toolbar"></div>
-          <div id="grid-container" class="grid-container"></div>
+          <div id="workspace-split" class="workspace-split">
+            <div id="workspace-main" class="workspace-main">
+              <div id="grid-container" class="grid-container"></div>
+            </div>
+
+            <aside id="workspace-panel" class="workspace-panel" aria-label="Workspace panel">
+              <div class="workspace-panel-header">
+                <div class="workspace-panel-tabs">
+                  <button id="btn-panel-files" class="panel-tab active" type="button">Files</button>
+                  <button id="btn-panel-docs" class="panel-tab" type="button">Docs</button>
+                </div>
+                <div class="workspace-panel-actions">
+                  <button id="btn-panel-refresh" class="panel-action" type="button">Refresh</button>
+                  <button id="btn-panel-close" class="panel-close" type="button">Close</button>
+                </div>
+              </div>
+              <div id="workspace-panel-body" class="workspace-panel-body">
+                <div id="file-browser-view" class="panel-view active"></div>
+                <div id="markdown-viewer-view" class="panel-view"></div>
+              </div>
+            </aside>
+          </div>
+
+          <div id="workspace-panel-scrim" class="workspace-panel-scrim" aria-hidden="true"></div>
         </div>
       </main>
     </div>

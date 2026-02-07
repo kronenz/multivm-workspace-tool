@@ -10,6 +10,22 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 use tauri::Emitter;
 
+#[derive(Serialize, Clone, Debug)]
+pub struct FileEntry {
+    pub path: String,
+    pub name: String,
+    pub is_dir: bool,
+    pub size_bytes: u64,
+    pub mtime_epoch: Option<u64>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct ReadFileResult {
+    pub path: String,
+    pub bytes: Vec<u8>,
+    pub truncated: bool,
+}
+
 #[derive(Debug)]
 pub enum SshError {
     TcpConnect(String),
@@ -41,6 +57,15 @@ impl std::error::Error for SshError {}
 pub enum SessionCommand {
     Write(Vec<u8>),
     Resize { cols: u32, rows: u32 },
+    ListDirectory {
+        path: String,
+        reply_tx: mpsc::Sender<Result<Vec<FileEntry>, String>>,
+    },
+    ReadFile {
+        path: String,
+        max_bytes: Option<u64>,
+        reply_tx: mpsc::Sender<Result<ReadFileResult, String>>,
+    },
     Shutdown,
 }
 
@@ -111,6 +136,118 @@ impl SshSessionHandle {
             let _ = worker.join();
         }
     }
+
+    pub fn list_directory(&self, path: String) -> Result<Vec<FileEntry>, SshError> {
+        let (reply_tx, reply_rx) = mpsc::channel::<Result<Vec<FileEntry>, String>>();
+        self.cmd_tx
+            .send(SessionCommand::ListDirectory { path, reply_tx })
+            .map_err(|e| SshError::Send(e.to_string()))?;
+
+        reply_rx
+            .recv_timeout(Duration::from_secs(15))
+            .map_err(|e| SshError::Channel(format!("list_directory response timeout: {e}")))?
+            .map_err(SshError::Channel)
+    }
+
+    pub fn read_file(&self, path: String, max_bytes: Option<u64>) -> Result<ReadFileResult, SshError> {
+        let (reply_tx, reply_rx) = mpsc::channel::<Result<ReadFileResult, String>>();
+        self.cmd_tx
+            .send(SessionCommand::ReadFile {
+                path,
+                max_bytes,
+                reply_tx,
+            })
+            .map_err(|e| SshError::Send(e.to_string()))?;
+
+        reply_rx
+            .recv_timeout(Duration::from_secs(30))
+            .map_err(|e| SshError::Channel(format!("read_file response timeout: {e}")))?
+            .map_err(SshError::Channel)
+    }
+}
+
+fn stat_is_dir(perm: Option<u32>) -> bool {
+    // POSIX file mode bits. When available, ssh2 exposes st_mode via FileStat.perm.
+    // https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/sys_stat.h.html
+    const S_IFMT: u32 = 0o170000;
+    const S_IFDIR: u32 = 0o040000;
+    match perm {
+        Some(p) => (p & S_IFMT) == S_IFDIR,
+        None => false,
+    }
+}
+
+fn sftp_list_directory(sess: &Session, path: &str) -> Result<Vec<FileEntry>, String> {
+    let sftp = sess.sftp().map_err(|e| format!("sftp init: {e}"))?;
+    let entries = sftp
+        .readdir(Path::new(path))
+        .map_err(|e| format!("sftp readdir {path}: {e}"))?;
+
+    let mut out = Vec::new();
+    for (p, stat) in entries {
+        let name = p
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| p.to_string_lossy().to_string());
+
+        if name == "." || name == ".." {
+            continue;
+        }
+
+        out.push(FileEntry {
+            path: p.to_string_lossy().to_string(),
+            name,
+            is_dir: stat_is_dir(stat.perm),
+            size_bytes: stat.size.unwrap_or(0),
+            mtime_epoch: stat.mtime,
+        });
+    }
+
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
+fn sftp_read_file(sess: &Session, path: &str, max_bytes: Option<u64>) -> Result<ReadFileResult, String> {
+    const DEFAULT_MAX_BYTES: u64 = 1024 * 1024; // 1 MiB
+    let limit = max_bytes.unwrap_or(DEFAULT_MAX_BYTES);
+
+    let sftp = sess.sftp().map_err(|e| format!("sftp init: {e}"))?;
+    let mut file = sftp
+        .open(Path::new(path))
+        .map_err(|e| format!("sftp open {path}: {e}"))?;
+
+    let mut out: Vec<u8> = Vec::new();
+    let mut buf = [0u8; 8192];
+    while (out.len() as u64) < limit {
+        let remaining = (limit - out.len() as u64) as usize;
+        let to_read = std::cmp::min(buf.len(), remaining);
+        let n = file
+            .read(&mut buf[..to_read])
+            .map_err(|e| format!("sftp read {path}: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        out.extend_from_slice(&buf[..n]);
+    }
+
+    // If we hit the limit exactly, probe one more byte to determine truncation.
+    // Do not include the byte in output to preserve the requested maximum size.
+    let truncated = if (out.len() as u64) < limit {
+        false
+    } else {
+        let mut one = [0u8; 1];
+        match file.read(&mut one) {
+            Ok(0) => false,
+            Ok(_) => true,
+            Err(e) => return Err(format!("sftp read {path}: {e}")),
+        }
+    };
+
+    Ok(ReadFileResult {
+        path: path.to_string(),
+        truncated,
+        bytes: out,
+    })
 }
 
 fn session_worker(
@@ -294,6 +431,22 @@ fn session_worker(
             }
             Ok(SessionCommand::Resize { cols, rows }) => {
                 let _ = channel.request_pty_size(cols, rows, None, None);
+            }
+            Ok(SessionCommand::ListDirectory { path, reply_tx }) => {
+                sess.set_blocking(true);
+                let result = sftp_list_directory(&sess, &path);
+                sess.set_blocking(false);
+                let _ = reply_tx.send(result);
+            }
+            Ok(SessionCommand::ReadFile {
+                path,
+                max_bytes,
+                reply_tx,
+            }) => {
+                sess.set_blocking(true);
+                let result = sftp_read_file(&sess, &path, max_bytes);
+                sess.set_blocking(false);
+                let _ = reply_tx.send(result);
             }
             Ok(SessionCommand::Shutdown) => break,
             Err(TryRecvError::Disconnected) => break,

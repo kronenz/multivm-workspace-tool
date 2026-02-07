@@ -4,7 +4,7 @@ mod ssh;
 use serde::Serialize;
 use uuid::Uuid;
 use workset::{AuthMethod, CreateWorksetInput, UpdateWorksetInput, Workset, WorksetStore, WorksetSummary};
-use ssh::{SshConnectionManager, SshSessionConfig};
+use ssh::{FileEntry, ReadFileResult, SshConnectionManager, SshSessionConfig};
 
 // ── Return type for activate_workset ──
 
@@ -154,6 +154,29 @@ fn terminal_resize(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn list_directory(
+    session_id: String,
+    path: String,
+    ssh_manager: tauri::State<'_, SshConnectionManager>,
+) -> Result<Vec<FileEntry>, String> {
+    ssh_manager
+        .list_directory(&session_id, path)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn read_file(
+    session_id: String,
+    path: String,
+    max_bytes: Option<u64>,
+    ssh_manager: tauri::State<'_, SshConnectionManager>,
+) -> Result<ReadFileResult, String> {
+    ssh_manager
+        .read_file(&session_id, path, max_bytes)
+        .map_err(|e| e.to_string())
+}
+
 // ── App Entry ──
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -172,6 +195,8 @@ pub fn run() {
             deactivate_workset,
             terminal_input,
             terminal_resize,
+            list_directory,
+            read_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

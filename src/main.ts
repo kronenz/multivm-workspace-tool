@@ -1,9 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { createLayoutToolbar } from './grid.ts';
 import type { PaneState } from './workspace.ts';
-import { createWorkspace, attachTerminal, destroyWorkspace, setPaneHostLabel, writeToPaneBuffer, updatePaneStatus } from './workspace.ts';
+import { createWorkspace, attachTerminal, destroyWorkspace, getActivePaneIndex, setPaneHostLabel, writeToPaneBuffer, updatePaneStatus } from './workspace.ts';
+import { FileBrowser, type FileEntry } from './file_browser.ts';
+import { installMarkdownLinkHandler, renderMarkdownToHtml } from './markdown.ts';
 
 interface WorksetSummary {
   id: string;
@@ -56,6 +59,12 @@ interface SessionInfo {
   status: string;
 }
 
+interface ReadFileResult {
+  path: string;
+  bytes: number[];
+  truncated: boolean;
+}
+
 let selectedWorksetId: string | null = null;
 let allSummaries: WorksetSummary[] = [];
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -63,9 +72,22 @@ let activeWorkspace: {
   worksetId: string;
   panes: PaneState[];
   sessionInfos: SessionInfo[];
+  rootPaths: string[];
 } | null = null;
 
 let eventUnlisteners: UnlistenFn[] = [];
+
+let panelOpen = false;
+let panelMode: 'files' | 'docs' = 'files';
+let fileBrowser: FileBrowser | null = null;
+let fileAutoRefreshTimer: ReturnType<typeof setInterval> | null = null;
+let mdAutoRefreshTimer: ReturnType<typeof setInterval> | null = null;
+let panelSyncTimer: ReturnType<typeof setInterval> | null = null;
+let mdState: { sessionId: string; path: string; lastText: string | null } | null = null;
+let mdContentEl: HTMLElement | null = null;
+let mdPathEl: HTMLElement | null = null;
+let mdNoteEl: HTMLElement | null = null;
+let panelInitialized = false;
 
 function $(id: string): HTMLElement {
   const el = document.getElementById(id);
@@ -113,6 +135,223 @@ function showToast(message: string, type: "success" | "error"): void {
   toastTimer = setTimeout(() => {
     toast!.classList.remove("visible");
   }, 3000);
+}
+
+// ── Workspace Side Panel (File Browser + Markdown Viewer) ──
+
+function initWorkspacePanel(): void {
+  if (panelInitialized) return;
+  panelInitialized = true;
+
+  const filesTab = $("btn-panel-files") as HTMLButtonElement;
+  const docsTab = $("btn-panel-docs") as HTMLButtonElement;
+  const closeBtn = $("btn-panel-close") as HTMLButtonElement;
+  const refreshBtn = $("btn-panel-refresh") as HTMLButtonElement;
+  const scrim = $("workspace-panel-scrim");
+
+  const filesView = $("file-browser-view");
+  const docsView = $("markdown-viewer-view");
+
+  // Build markdown viewer shell once.
+  docsView.innerHTML = `
+    <div class="md-header">
+      <div style="min-width:0">
+        <div class="md-path" id="md-path"></div>
+        <div class="md-note" id="md-note"></div>
+      </div>
+    </div>
+    <div class="markdown-body" id="md-content"></div>
+  `;
+  mdContentEl = docsView.querySelector<HTMLElement>("#md-content");
+  mdPathEl = docsView.querySelector<HTMLElement>("#md-path");
+  mdNoteEl = docsView.querySelector<HTMLElement>("#md-note");
+
+  if (mdContentEl) {
+    installMarkdownLinkHandler(
+      mdContentEl,
+      async (url: string) => {
+        await openUrl(url);
+      },
+      () => {
+        showToast('Not supported', 'error');
+      },
+    );
+  }
+
+  fileBrowser = new FileBrowser(
+    filesView,
+    async (sessionId: string, path: string) => {
+      return invoke<FileEntry[]>("list_directory", { sessionId, path });
+    },
+    (path: string) => {
+      openMarkdownForActiveSession(path);
+    },
+    showToast,
+  );
+
+  filesTab.addEventListener('click', () => setPanelMode('files'));
+  docsTab.addEventListener('click', () => setPanelMode('docs'));
+  closeBtn.addEventListener('click', () => setPanelOpen(false));
+  scrim.addEventListener('click', () => setPanelOpen(false));
+
+  refreshBtn.addEventListener('click', () => {
+    if (panelMode === 'files') {
+      void fileBrowser?.refresh();
+    } else {
+      void refreshMarkdown(true);
+    }
+  });
+
+  // Default state
+  setPanelMode('files');
+  setPanelOpen(false);
+}
+
+function setPanelMode(mode: 'files' | 'docs'): void {
+  panelMode = mode;
+  const filesTab = $("btn-panel-files");
+  const docsTab = $("btn-panel-docs");
+  const filesView = $("file-browser-view");
+  const docsView = $("markdown-viewer-view");
+
+  if (mode === 'files') {
+    filesTab.classList.add('active');
+    docsTab.classList.remove('active');
+    filesView.classList.add('active');
+    docsView.classList.remove('active');
+  } else {
+    docsTab.classList.add('active');
+    filesTab.classList.remove('active');
+    docsView.classList.add('active');
+    filesView.classList.remove('active');
+  }
+}
+
+function setPanelOpen(open: boolean): void {
+  panelOpen = open;
+  const wsView = $("workspace-view");
+  if (open) {
+    wsView.classList.add('panel-open');
+    syncPanelToActivePane();
+    startPanelTimers();
+  } else {
+    wsView.classList.remove('panel-open');
+    stopPanelTimers();
+  }
+}
+
+function togglePanel(): void {
+  initWorkspacePanel();
+  setPanelOpen(!panelOpen);
+}
+
+function startPanelTimers(): void {
+  if (fileAutoRefreshTimer) clearInterval(fileAutoRefreshTimer);
+  fileAutoRefreshTimer = setInterval(() => {
+    if (!panelOpen) return;
+    void fileBrowser?.refresh();
+  }, 10000);
+
+  if (mdAutoRefreshTimer) clearInterval(mdAutoRefreshTimer);
+  mdAutoRefreshTimer = setInterval(() => {
+    if (!panelOpen) return;
+    if (!mdState) return;
+    void refreshMarkdown(false);
+  }, 5000);
+
+  if (panelSyncTimer) clearInterval(panelSyncTimer);
+  panelSyncTimer = setInterval(() => {
+    if (!panelOpen) return;
+    syncPanelToActivePane();
+  }, 500);
+}
+
+function stopPanelTimers(): void {
+  if (fileAutoRefreshTimer) {
+    clearInterval(fileAutoRefreshTimer);
+    fileAutoRefreshTimer = null;
+  }
+  if (mdAutoRefreshTimer) {
+    clearInterval(mdAutoRefreshTimer);
+    mdAutoRefreshTimer = null;
+  }
+  if (panelSyncTimer) {
+    clearInterval(panelSyncTimer);
+    panelSyncTimer = null;
+  }
+}
+
+function getActiveSessionContext(): { sessionId: string | null; rootPath: string | null } {
+  if (!activeWorkspace) return { sessionId: null, rootPath: null };
+  const idx = getActivePaneIndex();
+  const pane = activeWorkspace.panes[idx];
+  const sessionId = pane?.sessionId ?? null;
+  const rootPath = activeWorkspace.rootPaths[idx] ?? null;
+  return { sessionId, rootPath };
+}
+
+function syncPanelToActivePane(): void {
+  if (!panelOpen) return;
+  if (!fileBrowser) return;
+  const { sessionId, rootPath } = getActiveSessionContext();
+  fileBrowser.setContext(sessionId, rootPath);
+}
+
+function openMarkdownForActiveSession(path: string): void {
+  const { sessionId } = getActiveSessionContext();
+  if (!sessionId) {
+    showToast('No active session for this pane', 'error');
+    return;
+  }
+  initWorkspacePanel();
+  setPanelOpen(true);
+  setPanelMode('docs');
+  mdState = { sessionId, path, lastText: null };
+  void refreshMarkdown(true);
+}
+
+async function refreshMarkdown(force: boolean): Promise<void> {
+  if (!mdState || !mdContentEl || !mdPathEl || !mdNoteEl) {
+    return;
+  }
+
+  try {
+    const result = await invoke<ReadFileResult>('read_file', {
+      sessionId: mdState.sessionId,
+      path: mdState.path,
+      maxBytes: 1024 * 1024,
+    });
+
+    const bytes = new Uint8Array(result.bytes);
+    const text = new TextDecoder('utf-8').decode(bytes);
+
+    mdPathEl.textContent = mdState.path;
+    mdNoteEl.textContent = result.truncated
+      ? 'Showing first 1 MiB (truncated) · Auto-refresh 5s'
+      : 'Auto-refresh 5s';
+
+    if (!force && mdState.lastText === text) return;
+    mdState.lastText = text;
+
+    mdContentEl.innerHTML = renderMarkdownToHtml(text);
+  } catch (err) {
+    showToast(`Failed to read file: ${String(err)}`, 'error');
+  }
+}
+
+function insertPanelToggleButton(toolbarContainer: HTMLElement): void {
+  if (toolbarContainer.querySelector('#btn-workspace-panel')) return;
+  const btn = document.createElement('button');
+  btn.id = 'btn-workspace-panel';
+  btn.className = 'layout-toolbar-btn';
+  btn.textContent = 'Panel';
+
+  const disconnect = toolbarContainer.querySelector('#btn-disconnect-all');
+  if (disconnect && disconnect.parentElement === toolbarContainer) {
+    toolbarContainer.insertBefore(btn, disconnect);
+  } else {
+    toolbarContainer.appendChild(btn);
+  }
 }
 
 const GRID_PRESETS: Record<string, { rows: number; cols: number }> = {
@@ -659,6 +898,13 @@ async function cleanupWorkspace(): Promise<void> {
   }
   eventUnlisteners = [];
 
+  // Stop any workspace-panel timers and close panel.
+  stopPanelTimers();
+  mdState = null;
+  panelOpen = false;
+  const wsView = document.getElementById('workspace-view');
+  wsView?.classList.remove('panel-open');
+
   // Deactivate SSH sessions
   try {
     await invoke("deactivate_workset");
@@ -719,6 +965,8 @@ async function handleActivateWorkset(worksetId: string): Promise<void> {
       // Layout preset switching not implemented in this batch
     });
 
+    insertPanelToggleButton(toolbarContainer);
+
     // Set host labels and attach terminals
     for (let i = 0; i < Math.min(panes.length, workset.connections.length); i++) {
       const conn = workset.connections[i];
@@ -731,7 +979,11 @@ async function handleActivateWorkset(worksetId: string): Promise<void> {
       worksetId,
       panes,
       sessionInfos: [],
+      rootPaths: workset.connections.map((c) => c.project_path),
     };
+
+    const wsState = activeWorkspace;
+    if (!wsState) throw new Error('workspace state missing');
 
     // Invoke SSH activation via Tauri IPC
     const sessions = await invoke<SessionInfo[]>("activate_workset", {
@@ -739,7 +991,7 @@ async function handleActivateWorkset(worksetId: string): Promise<void> {
       passwords,
     });
 
-    activeWorkspace.sessionInfos = sessions;
+    wsState.sessionInfos = sessions;
 
     // Map session IDs to panes and wire event listeners
     for (const session of sessions) {
@@ -801,6 +1053,9 @@ async function handleActivateWorkset(worksetId: string): Promise<void> {
       }
     }
 
+    initWorkspacePanel();
+    syncPanelToActivePane();
+
     showToast("Workspace activated", "success");
   } catch (err) {
     showToast(`Activation failed: ${String(err)}`, "error");
@@ -860,6 +1115,14 @@ window.addEventListener("DOMContentLoaded", () => {
     const target = e.target as HTMLElement;
     if (target.id === "btn-disconnect-all") {
       handleDisconnectAll();
+    }
+    if (target.id === 'btn-workspace-panel') {
+      togglePanel();
+    }
+
+    // If the user changed active pane while panel is open, keep file browser in sync.
+    if (panelOpen && target.closest('.grid-pane')) {
+      setTimeout(() => syncPanelToActivePane(), 0);
     }
   });
 });

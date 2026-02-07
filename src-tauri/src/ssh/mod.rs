@@ -1,6 +1,6 @@
 pub mod session;
 
-pub use session::{SshSessionConfig, SshSessionHandle, SessionCommand, SessionStatus, SshError};
+pub use session::{FileEntry, ReadFileResult, SessionCommand, SessionStatus, SshError, SshSessionConfig, SshSessionHandle};
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -90,6 +90,27 @@ impl SshConnectionManager {
         })?;
         let handle = sessions.get(session_id).ok_or(SshError::SessionNotFound)?;
         handle.resize(cols, rows)
+    }
+
+    pub fn list_directory(&self, session_id: &str, path: String) -> Result<Vec<FileEntry>, SshError> {
+        let sessions = self.sessions.lock().map_err(|_| {
+            SshError::Channel("session lock poisoned".to_string())
+        })?;
+        let handle = sessions.get(session_id).ok_or(SshError::SessionNotFound)?;
+        handle.list_directory(path)
+    }
+
+    pub fn read_file(
+        &self,
+        session_id: &str,
+        path: String,
+        max_bytes: Option<u64>,
+    ) -> Result<ReadFileResult, SshError> {
+        let sessions = self.sessions.lock().map_err(|_| {
+            SshError::Channel("session lock poisoned".to_string())
+        })?;
+        let handle = sessions.get(session_id).ok_or(SshError::SessionNotFound)?;
+        handle.read_file(path, max_bytes)
     }
 
     pub fn disconnect(&self, session_id: &str) -> Result<(), SshError> {
