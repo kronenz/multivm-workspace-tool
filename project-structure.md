@@ -67,10 +67,13 @@ multivm-workspace-tool/
 └── docs/                        # 기획 문서 모음
     ├── README.md                # 문서 네비게이션 가이드
     ├── glossary.md              # 용어 정의 (23개 핵심 용어)
-    ├── market-research.md       # 경쟁 분석 (8개 1차 + 4개 인접 경쟁사)
-    ├── prd.md                   # 제품 요구사항 (2 페르소나, 8 MUST, MoSCoW)
-    ├── architecture.md          # 아키텍처 블루프린트 (C4 다이어그램, 9 컴포넌트, 3 ADR)
-    └── mvp-spec.md              # MVP 사양 (10 기능, 10 제외, 138 체크박스)
+    ├── product/
+    │   ├── market-research.md   # 경쟁 분석 (8개 1차 + 4개 인접 경쟁사)
+    │   └── prd.md               # 제품 요구사항 (2 페르소나, 8 MUST, MoSCoW)
+    ├── engineering/
+    │   └── architecture.md      # 아키텍처 블루프린트 (C4 다이어그램, 9 컴포넌트, 3 ADR)
+    └── qa/
+        └── mvp-spec.md          # MVP 사양 (10 기능, 10 제외, 138 체크박스)
 ```
 
 ### 향후 구현 시 예상 구조
@@ -96,10 +99,13 @@ multivm-workspace-tool/
 ├── docs/                        # 기획 문서 모음
 │   ├── README.md                # 문서 네비게이션 가이드
 │   ├── glossary.md              # 용어 정의
-│   ├── market-research.md       # 경쟁 분석
-│   ├── prd.md                   # 제품 요구사항
-│   ├── architecture.md          # 아키텍처 블루프린트
-│   └── mvp-spec.md              # MVP 사양
+│   ├── product/
+│   │   ├── market-research.md   # 경쟁 분석
+│   │   └── prd.md               # 제품 요구사항
+│   ├── engineering/
+│   │   └── architecture.md      # 아키텍처 블루프린트
+│   └── qa/
+│       └── mvp-spec.md          # MVP 사양
 │  │                                                            │
 │  └────────────────────────────────────────────────────────────┘
 │
@@ -243,8 +249,8 @@ Tauri의 Trust Boundary 모델에 따라, 코드 작성 시 반드시 아래 규
 |------|------|
 | **용어 일관성** | 모든 문서는 `docs/glossary.md`의 정의를 따른다 |
 | **영문 파일명** | 파일명은 영문 소문자 + 하이픈 (kebab-case). 한글 금지 |
-| **문서 간 참조** | 상대 경로로 링크. 예: `[PRD](./docs/prd.md)` |
-| **ADR 기록** | 주요 아키텍처 결정은 `docs/architecture.md`의 ADR 섹션에 기록 |
+| **문서 간 참조** | 상대 경로로 링크. 예: `[PRD](./docs/product/prd.md)` |
+| **ADR 기록** | 주요 아키텍처 결정은 `docs/engineering/architecture.md`의 ADR 섹션에 기록 |
 | **변경 이력** | 각 문서 하단에 Revision History 유지 |
 
 ### 4.5 Security Rules
@@ -365,22 +371,22 @@ AI 에이전트가 이 프로젝트를 이해하기 위한 권장 순서:
 1. **본 문서 (`project-structure.md`)** — 구조, 규칙, 컨벤션
 2. **`AGENTS.md`** — 프로젝트 전체 요약, 아키텍처, 기술 스택
 3. **`docs/glossary.md`** — 23개 핵심 용어 정의
-4. **`docs/architecture.md`** — C4 다이어그램, 컴포넌트, ADR, 리스크
-5. **`docs/mvp-spec.md`** — 10 기능, 10 제외, E2E 시나리오, AC
+4. **`docs/engineering/architecture.md`** — C4 다이어그램, 컴포넌트, ADR, 리스크
+5. **`docs/qa/mvp-spec.md`** — 10 기능, 10 제외, E2E 시나리오, AC
 
 ### 코드 구현 시 참조 문서
 
 | 작업 | 참조 문서 |
 |------|----------|
-| SSH 연결 구현 | `docs/architecture.md` § SSH Connection Manager, ADR-003 |
-| 터미널 구현 | `docs/architecture.md` § Terminal Emulator, ADR-002 |
-| Workset 구현 | `docs/mvp-spec.md` § Feature 1, AC-1 |
-| Grid Layout 구현 | `docs/mvp-spec.md` § Feature 4, AC-4 |
-| 리소스 모니터링 | `docs/mvp-spec.md` § Feature 7, Resource Monitoring Detailed Scope |
-| AI CLI 자동 실행 | `docs/mvp-spec.md` § Feature 8, AC-8 |
-| 보안 설계 | `docs/architecture.md` § Security Considerations |
+| SSH 연결 구현 | `docs/engineering/architecture.md` § SSH Connection Manager, ADR-003 |
+| 터미널 구현 | `docs/engineering/architecture.md` § Terminal Emulator, ADR-002 |
+| Workset 구현 | `docs/qa/mvp-spec.md` § Feature 1, AC-1 |
+| Grid Layout 구현 | `docs/qa/mvp-spec.md` § Feature 4, AC-4 |
+| 리소스 모니터링 | `docs/qa/mvp-spec.md` § Feature 7, Resource Monitoring Detailed Scope |
+| AI CLI 자동 실행 | `docs/qa/mvp-spec.md` § Feature 8, AC-8 |
+| 보안 설계 | `docs/engineering/architecture.md` § Security Considerations |
 | 용어 확인 | `docs/glossary.md` |
-| 경쟁 분석 맥락 | `docs/market-research.md` |
+| 경쟁 분석 맥락 | `docs/product/market-research.md` |
 
 ---
 

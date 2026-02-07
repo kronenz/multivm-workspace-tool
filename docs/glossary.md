@@ -122,17 +122,17 @@ This product is **explicitly excluded** from the following:
 
 This glossary serves as the **terminology foundation** for all other planning documents:
 
-- **Market Research Report** (`market-research.md`) — Uses these terms when analyzing competitors and market gaps
-- **Product Requirements Document** (`prd.md`) — Uses these terms when defining features and requirements
-- **Architecture Blueprint** (`architecture.md`) — Uses these terms when naming components and systems
-- **MVP Specification** (`mvp-spec.md`) — Uses these terms when scoping features and exclusions
+- **Market Research Report** (`product/market-research.md`) — Uses these terms when analyzing competitors and market gaps
+- **Product Requirements Document** (`product/prd.md`) — Uses these terms when defining features and requirements
+- **Architecture Blueprint** (`engineering/architecture.md`) — Uses these terms when naming components and systems
+- **MVP Specification** (`qa/mvp-spec.md`) — Uses these terms when scoping features and exclusions
 
 이 용어집은 모든 기획 문서의 **용어 기반**으로 사용됩니다:
 
-- **시장 조사 보고서** (`market-research.md`) — 경쟁사 분석 및 시장 공백 분석 시 이 용어 사용
-- **제품 요구사항 정의서** (`prd.md`) — 기능 및 요구사항 정의 시 이 용어 사용
-- **아키텍처 블루프린트** (`architecture.md`) — 컴포넌트 및 시스템 명명 시 이 용어 사용
-- **MVP 사양서** (`mvp-spec.md`) — 기능 범위 및 제외 항목 정의 시 이 용어 사용
+- **시장 조사 보고서** (`product/market-research.md`) — 경쟁사 분석 및 시장 공백 분석 시 이 용어 사용
+- **제품 요구사항 정의서** (`product/prd.md`) — 기능 및 요구사항 정의 시 이 용어 사용
+- **아키텍처 블루프린트** (`engineering/architecture.md`) — 컴포넌트 및 시스템 명명 시 이 용어 사용
+- **MVP 사양서** (`qa/mvp-spec.md`) — 기능 범위 및 제외 항목 정의 시 이 용어 사용
 
 ---
 

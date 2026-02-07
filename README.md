@@ -82,10 +82,10 @@ All planning documents are in the `docs/` folder:
 
 - **[Documentation Guide](./docs/README.md)** — Navigation guide for all planning documents
 - **[Glossary](./docs/glossary.md)** — Key terminology and definitions
-- **[Market Research](./docs/market-research.md)** — Competitive analysis and market opportunity
-- **[PRD](./docs/prd.md)** — Complete product requirements and user personas
-- **[Architecture](./docs/architecture.md)** — Technical design and system architecture
-- **[MVP Spec](./docs/mvp-spec.md)** — Detailed MVP feature specifications
+- **[Market Research](./docs/product/market-research.md)** — Competitive analysis and market opportunity
+- **[PRD](./docs/product/prd.md)** — Complete product requirements and user personas
+- **[Architecture](./docs/engineering/architecture.md)** — Technical design and system architecture
+- **[MVP Spec](./docs/qa/mvp-spec.md)** — Detailed MVP feature specifications
 
 ## Contributing
 

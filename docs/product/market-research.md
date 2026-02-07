@@ -605,7 +605,7 @@ Source: [VS Code Multi-Agent Development Blog (2026.02)](https://code.visualstud
 - **데이터 수집 기간**: 2026-02-07
 - **수집 방법**: 경쟁사 공식 웹사이트, GitHub 리포지토리, App Store 페이지, 기술 블로그, Hacker News 토론, GitHub Issues, 개발자 설문조사 결과 분석
 - **분석 기준**: 핵심 기능, 가격 모델, 플랫폼 지원, 커뮤니티 규모, 강점/약점
-- **용어 기준**: [docs/glossary.md](./glossary.md) 참조
+- **용어 기준**: [docs/glossary.md](../glossary.md) 참조
 
 ---
 

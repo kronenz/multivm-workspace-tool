@@ -8,7 +8,7 @@
 | **Version** | 1.0 |
 | **Date** | 2026-02-07 |
 | **Status** | Draft |
-| **Related Documents** | [Glossary](./glossary.md), [PRD](./prd.md), [Market Research](./market-research.md) |
+| **Related Documents** | [Glossary](../glossary.md), [PRD](../product/prd.md), [Market Research](../product/market-research.md) |
 
 ---
 
@@ -777,7 +777,7 @@ Sources:
 
 ## Terminology Reference
 
-이 문서의 모든 용어는 [Glossary](./glossary.md)의 정의를 따른다. 핵심 용어:
+이 문서의 모든 용어는 [Glossary](../glossary.md)의 정의를 따른다. 핵심 용어:
 
 - **Workset (워크셋)**: SSH 연결 정보 + 프로젝트 폴더 + AI CLI 명령 + Grid Layout이 포함된 저장 프로필
 - **Grid Layout (그리드 레이아웃)**: 터미널, 파일 브라우저, 뷰어를 NxM으로 배치하는 시각적 레이아웃

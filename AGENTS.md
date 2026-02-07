@@ -89,10 +89,13 @@ multivm-workspace-tool/
 └── docs/                        # 기획 문서 모음
     ├── README.md                # 문서 네비게이션 가이드
     ├── glossary.md              # 용어 정의 (23개 핵심 용어)
-    ├── market-research.md       # 경쟁 분석 (8개 1차 + 4개 인접 경쟁사)
-    ├── prd.md                   # 제품 요구사항 (2 페르소나, 8 MUST, MoSCoW)
-    ├── architecture.md          # 아키텍처 블루프린트 (C4 다이어그램, 9 컴포넌트, 3 ADR)
-    └── mvp-spec.md              # MVP 사양 (10 기능, 10 제외, 138 체크박스)
+    ├── product/
+    │   ├── market-research.md   # 경쟁 분석 (8개 1차 + 4개 인접 경쟁사)
+    │   └── prd.md               # 제품 요구사항 (2 페르소나, 8 MUST, MoSCoW)
+    ├── engineering/
+    │   └── architecture.md      # 아키텍처 블루프린트 (C4 다이어그램, 9 컴포넌트, 3 ADR)
+    └── qa/
+        └── mvp-spec.md          # MVP 사양 (10 기능, 10 제외, 138 체크박스)
 ```
 
 ### 향후 구현 시 예상 구조
@@ -200,10 +203,10 @@ multivm-workspace-tool/
 |----------|------|---------|
 | Project Structure | `./project-structure.md` | 프로젝트 구조, 규칙, 컨벤션 정의 |
 | Glossary | `./docs/glossary.md` | 23개 핵심 용어 정의 |
-| PRD | `./docs/prd.md` | 제품 요구사항, 페르소나, MoSCoW |
-| Architecture | `./docs/architecture.md` | C4 다이어그램, 컴포넌트, ADR, 리스크 |
-| MVP Spec | `./docs/mvp-spec.md` | 10 기능, 10 제외, E2E 시나리오, AC |
-| Market Research | `./docs/market-research.md` | 8 경쟁사, 4 시장 공백, Pain Points |
+| PRD | `./docs/product/prd.md` | 제품 요구사항, 페르소나, MoSCoW |
+| Architecture | `./docs/engineering/architecture.md` | C4 다이어그램, 컴포넌트, ADR, 리스크 |
+| MVP Spec | `./docs/qa/mvp-spec.md` | 10 기능, 10 제외, E2E 시나리오, AC |
+| Market Research | `./docs/product/market-research.md` | 8 경쟁사, 4 시장 공백, Pain Points |
 | Contributing | `./CONTRIBUTING.md` | 기여 가이드, 코드 스타일, PR 프로세스 |
 
 ### 문서 간 참조 흐름

@@ -8,7 +8,7 @@
 | **Version** | 1.0 |
 | **Date** | 2026-02-07 |
 | **Status** | Draft |
-| **Related Documents** | [Glossary](./glossary.md), [PRD](./prd.md), [Architecture](./architecture.md), [Market Research](./market-research.md) |
+| **Related Documents** | [Glossary](../glossary.md), [PRD](../product/prd.md), [Architecture](../engineering/architecture.md), [Market Research](../product/market-research.md) |
 
 ---
 
@@ -906,7 +906,7 @@ Theme preference is saved in app settings and persists across sessions.
 
 ## Terminology Reference
 
-All terms in this document follow definitions in [Glossary](./glossary.md). Key terms:
+All terms in this document follow definitions in [Glossary](../glossary.md). Key terms:
 
 - **Workset**: Saved profile with SSH details, project path, AI CLI command, grid layout
 - **Grid Layout**: Visual arrangement of terminal panes, file browsers, viewers (NxM grid)

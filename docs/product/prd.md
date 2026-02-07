@@ -8,7 +8,7 @@
 | **Version** | 1.0 |
 | **Date** | 2026-02-07 |
 | **Status** | Draft |
-| **Related Documents** | [Glossary](./glossary.md), [Market Research](./market-research.md) |
+| **Related Documents** | [Glossary](../glossary.md), [Market Research](./market-research.md) |
 
 ---
 
@@ -514,7 +514,7 @@ This document defines the product requirements for a **Desktop Application** tha
 
 ## Appendix: Terminology Reference
 
-All terms in this document follow definitions in [Glossary](./glossary.md). Key terms:
+All terms in this document follow definitions in [Glossary](../glossary.md). Key terms:
 
 - **Workset**: Saved profile with SSH details, project path, AI CLI command, grid layout
 - **Grid Layout**: Visual arrangement of terminal panes, file browsers, viewers
