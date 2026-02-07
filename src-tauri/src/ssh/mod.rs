@@ -92,6 +92,14 @@ impl SshConnectionManager {
         handle.resize(cols, rows)
     }
 
+    pub fn reconnect(&self, session_id: &str) -> Result<(), SshError> {
+        let sessions = self.sessions.lock().map_err(|_| {
+            SshError::Channel("session lock poisoned".to_string())
+        })?;
+        let handle = sessions.get(session_id).ok_or(SshError::SessionNotFound)?;
+        handle.reconnect_now()
+    }
+
     pub fn list_directory(&self, session_id: &str, path: String) -> Result<Vec<FileEntry>, SshError> {
         let sessions = self.sessions.lock().map_err(|_| {
             SshError::Channel("session lock poisoned".to_string())

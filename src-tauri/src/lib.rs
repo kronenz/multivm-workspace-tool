@@ -155,6 +155,16 @@ fn terminal_resize(
 }
 
 #[tauri::command]
+fn terminal_reconnect(
+    session_id: String,
+    ssh_manager: tauri::State<'_, SshConnectionManager>,
+) -> Result<(), String> {
+    ssh_manager
+        .reconnect(&session_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn list_directory(
     session_id: String,
     path: String,
@@ -195,6 +205,7 @@ pub fn run() {
             deactivate_workset,
             terminal_input,
             terminal_resize,
+            terminal_reconnect,
             list_directory,
             read_file,
         ])

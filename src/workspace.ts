@@ -121,6 +121,8 @@ export function attachTerminal(pane: PaneState): void {
   statusBar.innerHTML = `
     <span class="pane-status-dot connecting"></span>
     <span class="pane-host-label">${escapeText(pane.hostLabel)}</span>
+    <span class="pane-status-text"></span>
+    <button class="btn-pane-reconnect" type="button" style="display:none;">Reconnect</button>
   `;
   pane.container.appendChild(statusBar);
   pane.statusEl = statusBar;
@@ -176,13 +178,25 @@ export function writeToPaneBuffer(pane: PaneState, data: Uint8Array): void {
 
 // ── Status Management ──
 
-export function updatePaneStatus(pane: PaneState, status: string): void {
+export function updatePaneStatus(pane: PaneState, status: string, statusText?: string): void {
   if (!pane.statusEl) return;
   const dot = pane.statusEl.querySelector('.pane-status-dot');
   if (dot) {
     dot.className = 'pane-status-dot';
     const statusClass = typeof status === 'string' ? status.toLowerCase() : 'disconnected';
     dot.classList.add(statusClass);
+  }
+
+  const textEl = pane.statusEl.querySelector<HTMLElement>('.pane-status-text');
+  if (textEl) {
+    textEl.textContent = statusText ?? defaultStatusText(status);
+  }
+
+  const btn = pane.statusEl.querySelector<HTMLButtonElement>('.btn-pane-reconnect');
+  if (btn) {
+    const s = status.toLowerCase();
+    const show = s === 'reconnect_failed' || s === 'error';
+    btn.style.display = show ? '' : 'none';
   }
 }
 
@@ -202,4 +216,15 @@ function escapeText(str: string): string {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
+}
+
+function defaultStatusText(status: string): string {
+  const s = status.toLowerCase();
+  if (s === 'connecting') return 'Connecting...';
+  if (s === 'connected') return 'Connected';
+  if (s === 'reconnecting') return 'Reconnecting...';
+  if (s === 'reconnect_failed') return 'Connection lost. Click to reconnect manually.';
+  if (s === 'disconnected') return 'Disconnected';
+  if (s === 'error') return 'Error';
+  return '';
 }

@@ -66,6 +66,7 @@ impl std::error::Error for SshError {}
 pub enum SessionCommand {
     Write(Vec<u8>),
     Resize { cols: u32, rows: u32 },
+    ReconnectNow,
     ListDirectory {
         path: String,
         reply_tx: mpsc::Sender<Result<Vec<FileEntry>, String>>,
@@ -83,6 +84,8 @@ pub enum SessionCommand {
 pub enum SessionStatus {
     Connecting,
     Connected,
+    Reconnecting { attempt: u32, max: u32 },
+    ReconnectFailed,
     Disconnected,
     Error(String),
 }
@@ -136,6 +139,12 @@ impl SshSessionHandle {
     pub fn resize(&self, cols: u32, rows: u32) -> Result<(), SshError> {
         self.cmd_tx
             .send(SessionCommand::Resize { cols, rows })
+            .map_err(|e| SshError::Send(e.to_string()))
+    }
+
+    pub fn reconnect_now(&self) -> Result<(), SshError> {
+        self.cmd_tx
+            .send(SessionCommand::ReconnectNow)
             .map_err(|e| SshError::Send(e.to_string()))
     }
 
@@ -408,6 +417,9 @@ fn session_worker(
     app_handle: tauri::AppHandle,
     cmd_rx: mpsc::Receiver<SessionCommand>,
 ) {
+    const MAX_RETRIES: u32 = 3;
+    const RETRY_SCHEDULE_SECS: [u64; 3] = [0, 5, 10];
+
     let status_event = format!("session-status-{}", config.id);
     let output_event = format!("terminal-output-{}", config.id);
     let resource_event = format!("resource-update-{}", config.id);
@@ -416,232 +428,339 @@ fn session_worker(
         let _ = app_handle.emit(&status_event, status);
     };
 
-    emit_status(SessionStatus::Connecting);
+    let jitter_ms: u64 = config
+        .id
+        .as_bytes()
+        .iter()
+        .fold(0u64, |acc, b| acc.wrapping_add(*b as u64))
+        % 400;
 
-    // 2) DNS resolution
-    let addr_str = format!("{}:{}", config.host, config.port);
-    let sock_addr = match addr_str.to_socket_addrs() {
-        Ok(mut addrs) => match addrs.next() {
-            Some(a) => a,
-            None => {
-                emit_status(SessionStatus::Error(format!("no addresses for {addr_str}")));
-                return;
+    let is_auth_error = |msg: &str| {
+        msg.contains("auth")
+            || msg.contains("not authenticated")
+            || msg.contains("key auth requires")
+            || msg.contains("password auth requires")
+    };
+
+    let mut initial_connect = true;
+    let mut disconnect_started = Instant::now();
+    let mut next_attempt_at = Instant::now();
+    let mut next_attempt_num: u32 = 0;
+
+    let mut pty_cols: u32 = 80;
+    let mut pty_rows: u32 = 24;
+
+    // Helper to establish a fresh SSH session + interactive shell.
+    let connect_shell =
+        |run_ai_cli: bool, pty_cols: u32, pty_rows: u32| -> Result<(Session, Channel), String> {
+        // DNS resolution
+        let addr_str = format!("{}:{}", config.host, config.port);
+        let sock_addr = match addr_str.to_socket_addrs() {
+            Ok(mut addrs) => addrs.next().ok_or_else(|| format!("no addresses for {addr_str}"))?,
+            Err(e) => return Err(format!("resolve {addr_str}: {e}")),
+        };
+
+        // TCP connect with timeout
+        let tcp = TcpStream::connect_timeout(&sock_addr, Duration::from_secs(10))
+            .map_err(|e| format!("tcp connect {addr_str}: {e}"))?;
+        tcp.set_nodelay(true)
+            .map_err(|e| format!("tcp set_nodelay: {e}"))?;
+
+        // SSH handshake
+        let mut sess = Session::new().map_err(|e| format!("Session::new: {e}"))?;
+        let tcp_clone = tcp.try_clone().map_err(|e| format!("clone tcp: {e}"))?;
+        sess.set_tcp_stream(tcp_clone);
+        sess.handshake().map_err(|e| format!("handshake {addr_str}: {e}"))?;
+
+        // Auth dispatch
+        match config.auth_method.as_str() {
+            "key" => {
+                let key_path = config
+                    .key_path
+                    .as_deref()
+                    .filter(|p| !p.is_empty())
+                    .ok_or_else(|| "key auth requires key_path".to_string())?;
+
+                sess.userauth_pubkey_file(&config.user, None, Path::new(key_path), None)
+                    .map_err(|e| format!("auth {addr_str}: {e}"))?;
             }
-        },
-        Err(e) => {
-            emit_status(SessionStatus::Error(format!("resolve {addr_str}: {e}")));
-            return;
+            "password" => {
+                let password = config
+                    .password
+                    .as_deref()
+                    .filter(|p| !p.is_empty())
+                    .ok_or_else(|| "password auth requires password".to_string())?;
+
+                sess.userauth_password(&config.user, password)
+                    .map_err(|e| format!("auth {addr_str}: {e}"))?;
+            }
+            other => return Err(format!("unsupported auth method: {other}")),
         }
-    };
 
-    // 3) TCP connect with timeout
-    let tcp = match TcpStream::connect_timeout(&sock_addr, Duration::from_secs(10)) {
-        Ok(t) => t,
-        Err(e) => {
-            emit_status(SessionStatus::Error(format!("tcp connect {addr_str}: {e}")));
-            return;
+        if !sess.authenticated() {
+            return Err(format!("not authenticated on {addr_str}"));
         }
-    };
 
-    // 4) low latency
-    if let Err(e) = tcp.set_nodelay(true) {
-        emit_status(SessionStatus::Error(format!("tcp set_nodelay: {e}")));
-        return;
-    }
+        sess.set_keepalive(true, 15);
 
-    // 5) SSH handshake
-    let mut sess = match Session::new() {
-        Ok(s) => s,
-        Err(e) => {
-            emit_status(SessionStatus::Error(format!("Session::new: {e}")));
-            return;
+        // PTY + shell
+        let mut channel: Channel = sess
+            .channel_session()
+            .map_err(|e| format!("channel_session: {e}"))?;
+        channel
+            .request_pty("xterm-256color", None, Some((pty_cols, pty_rows, 0, 0)))
+            .map_err(|e| format!("request_pty: {e}"))?;
+        channel.shell().map_err(|e| format!("shell: {e}"))?;
+
+        // Restore working directory
+        if !config.project_path.is_empty() {
+            channel
+                .write_all(format!("cd {}\n", config.project_path).as_bytes())
+                .map_err(|e| format!("write cd command: {e}"))?;
         }
-    };
 
-    let tcp_clone = match tcp.try_clone() {
-        Ok(t) => t,
-        Err(e) => {
-            emit_status(SessionStatus::Error(format!("clone tcp: {e}")));
-            return;
-        }
-    };
-    sess.set_tcp_stream(tcp_clone);
-    if let Err(e) = sess.handshake() {
-        emit_status(SessionStatus::Error(format!("handshake {addr_str}: {e}")));
-        return;
-    }
-
-    // 6) Auth dispatch
-    match config.auth_method.as_str() {
-        "key" => {
-            let key_path = match config.key_path.as_deref() {
-                Some(p) if !p.is_empty() => p,
-                _ => {
-                    emit_status(SessionStatus::Error(
-                        "key auth requires key_path".to_string(),
-                    ));
-                    return;
+        // Only auto-run AI CLI on first activation.
+        if run_ai_cli {
+            if let Some(cmd) = config.ai_cli_command.as_deref() {
+                if !cmd.is_empty() {
+                    channel
+                        .write_all(format!("{}\n", cmd).as_bytes())
+                        .map_err(|e| format!("write ai cli command: {e}"))?;
                 }
-            };
-
-            if let Err(e) = sess.userauth_pubkey_file(
-                &config.user,
-                None,
-                Path::new(key_path),
-                None,
-            ) {
-                emit_status(SessionStatus::Error(format!("auth {addr_str}: {e}")));
-                return;
             }
         }
-        "password" => {
-            let password = match config.password.as_deref() {
-                Some(p) if !p.is_empty() => p,
-                _ => {
-                    emit_status(SessionStatus::Error(
-                        "password auth requires password".to_string(),
-                    ));
-                    return;
-                }
-            };
 
-            if let Err(e) = sess.userauth_password(&config.user, password) {
-                emit_status(SessionStatus::Error(format!("auth {addr_str}: {e}")));
-                return;
-            }
-        }
-        other => {
-            emit_status(SessionStatus::Error(format!(
-                "unsupported auth method: {other}"
-            )));
-            return;
-        }
-    }
-
-    // 7) Verify authentication
-    if !sess.authenticated() {
-        emit_status(SessionStatus::Error(format!(
-            "not authenticated on {addr_str}"
-        )));
-        return;
-    }
-
-    // 8) keepalive
-    sess.set_keepalive(true, 15);
-
-    // 9) PTY + shell
-    let mut channel: Channel = match sess.channel_session() {
-        Ok(c) => c,
-        Err(e) => {
-            emit_status(SessionStatus::Error(format!("channel_session: {e}")));
-            return;
-        }
+        Ok((sess, channel))
     };
 
-    if let Err(e) = channel.request_pty("xterm-256color", None, Some((80, 24, 0, 0))) {
-        emit_status(SessionStatus::Error(format!("request_pty: {e}")));
-        return;
-    }
-
-    if let Err(e) = channel.shell() {
-        emit_status(SessionStatus::Error(format!("shell: {e}")));
-        return;
-    }
-
-    // 10) cd project path
-    if !config.project_path.is_empty() {
-        if let Err(e) = channel.write_all(format!("cd {}\n", config.project_path).as_bytes()) {
-            emit_status(SessionStatus::Error(format!("write cd command: {e}")));
-            return;
+    // Outer loop: connect → run until drop/shutdown → reconnect as needed.
+    'outer: loop {
+        // Decide which state we are in.
+        if initial_connect {
+            emit_status(SessionStatus::Connecting);
+        } else if next_attempt_num > 0 {
+            emit_status(SessionStatus::Reconnecting {
+                attempt: next_attempt_num,
+                max: MAX_RETRIES,
+            });
         }
-    }
 
-    // 11) optionally launch AI CLI
-    if let Some(cmd) = config.ai_cli_command.as_deref() {
-        if !cmd.is_empty() {
-            if let Err(e) = channel.write_all(format!("{}\n", cmd).as_bytes()) {
-                emit_status(SessionStatus::Error(format!("write ai cli command: {e}")));
-                return;
-            }
-        }
-    }
-
-    // 12) connected
-    emit_status(SessionStatus::Connected);
-
-    // 13) non-blocking reads
-    sess.set_blocking(false);
-
-    let mut last_resource_emit = Instant::now()
-        .checked_sub(Duration::from_secs(5))
-        .unwrap_or_else(Instant::now);
-
-    // 14) main loop
-    loop {
-        match cmd_rx.try_recv() {
-            Ok(SessionCommand::Write(data)) => {
-                sess.set_blocking(true);
-                if let Err(e) = channel.write_all(&data) {
-                    emit_status(SessionStatus::Error(format!("channel write: {e}")));
+        // Wait until it's time to attempt a (re)connect.
+        while !initial_connect && Instant::now() < next_attempt_at {
+            match cmd_rx.try_recv() {
+                Ok(SessionCommand::Shutdown) | Err(TryRecvError::Disconnected) => {
+                    emit_status(SessionStatus::Disconnected);
+                    break 'outer;
+                }
+                Ok(SessionCommand::ReconnectNow) => {
+                    // Manual reconnect request: attempt immediately.
+                    disconnect_started = Instant::now();
+                    next_attempt_num = 1;
                     break;
                 }
-                sess.set_blocking(false);
+                Ok(SessionCommand::Resize { cols, rows }) => {
+                    pty_cols = cols;
+                    pty_rows = rows;
+                }
+                Ok(SessionCommand::ListDirectory { reply_tx, .. }) => {
+                    let _ = reply_tx.send(Err("not connected".to_string()));
+                }
+                Ok(SessionCommand::ReadFile { reply_tx, .. }) => {
+                    let _ = reply_tx.send(Err("not connected".to_string()));
+                }
+                Ok(_) => {
+                    // Ignore terminal input while disconnected.
+                }
+                Err(TryRecvError::Empty) => {
+                    // wait
+                }
             }
-            Ok(SessionCommand::Resize { cols, rows }) => {
-                let _ = channel.request_pty_size(cols, rows, None, None);
+
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        // Attempt connection.
+        let run_ai_cli = initial_connect;
+        let connect_result = connect_shell(run_ai_cli, pty_cols, pty_rows);
+
+        let (sess, mut channel) = match connect_result {
+            Ok(v) => v,
+            Err(msg) => {
+                emit_status(SessionStatus::Error(msg.clone()));
+
+                // Auth failures stop auto-reconnect and require manual action.
+                if initial_connect || is_auth_error(&msg) {
+                    emit_status(SessionStatus::ReconnectFailed);
+                    // Manual wait loop
+                    loop {
+                        match cmd_rx.try_recv() {
+                            Ok(SessionCommand::Shutdown) | Err(TryRecvError::Disconnected) => {
+                                emit_status(SessionStatus::Disconnected);
+                                break 'outer;
+                            }
+                            Ok(SessionCommand::ReconnectNow) => {
+                                initial_connect = false;
+                                disconnect_started = Instant::now();
+                                next_attempt_num = 1;
+                                break;
+                            }
+                            Ok(SessionCommand::Resize { cols, rows }) => {
+                                pty_cols = cols;
+                                pty_rows = rows;
+                            }
+                            Ok(SessionCommand::ListDirectory { reply_tx, .. }) => {
+                                let _ = reply_tx.send(Err("not connected".to_string()));
+                            }
+                            Ok(SessionCommand::ReadFile { reply_tx, .. }) => {
+                                let _ = reply_tx.send(Err("not connected".to_string()));
+                            }
+                            Ok(_) => {}
+                            Err(TryRecvError::Empty) => {}
+                        }
+                        std::thread::sleep(Duration::from_millis(80));
+                    }
+                    continue 'outer;
+                }
+
+                // Transient failures: keep retrying within budget.
+                if next_attempt_num >= MAX_RETRIES {
+                    emit_status(SessionStatus::ReconnectFailed);
+                    // Manual wait
+                    loop {
+                        match cmd_rx.try_recv() {
+                            Ok(SessionCommand::Shutdown) | Err(TryRecvError::Disconnected) => {
+                                emit_status(SessionStatus::Disconnected);
+                                break 'outer;
+                            }
+                            Ok(SessionCommand::ReconnectNow) => {
+                                disconnect_started = Instant::now();
+                                next_attempt_num = 1;
+                                break;
+                            }
+                            Ok(SessionCommand::Resize { cols, rows }) => {
+                                pty_cols = cols;
+                                pty_rows = rows;
+                            }
+                            Ok(SessionCommand::ListDirectory { reply_tx, .. }) => {
+                                let _ = reply_tx.send(Err("not connected".to_string()));
+                            }
+                            Ok(SessionCommand::ReadFile { reply_tx, .. }) => {
+                                let _ = reply_tx.send(Err("not connected".to_string()));
+                            }
+                            Ok(_) => {}
+                            Err(TryRecvError::Empty) => {}
+                        }
+                        std::thread::sleep(Duration::from_millis(80));
+                    }
+                    continue 'outer;
+                }
+
+                // Schedule next attempt.
+                let next = (next_attempt_num + 1).min(MAX_RETRIES);
+                let schedule_idx = (next.saturating_sub(1)) as usize;
+                let delay = RETRY_SCHEDULE_SECS.get(schedule_idx).copied().unwrap_or(10);
+                next_attempt_num = next;
+                next_attempt_at = disconnect_started
+                    + Duration::from_secs(delay)
+                    + Duration::from_millis(jitter_ms);
+                continue 'outer;
             }
-            Ok(SessionCommand::ListDirectory { path, reply_tx }) => {
+        };
+
+        // Connected
+        emit_status(SessionStatus::Connected);
+        initial_connect = false;
+
+        sess.set_blocking(false);
+        let mut last_resource_emit = Instant::now()
+            .checked_sub(Duration::from_secs(5))
+            .unwrap_or_else(Instant::now);
+
+        // Connected main loop
+        loop {
+            match cmd_rx.try_recv() {
+                Ok(SessionCommand::Write(data)) => {
+                    sess.set_blocking(true);
+                    if let Err(e) = channel.write_all(&data) {
+                        emit_status(SessionStatus::Error(format!("channel write: {e}")));
+                        break;
+                    }
+                    sess.set_blocking(false);
+                }
+                Ok(SessionCommand::Resize { cols, rows }) => {
+                    pty_cols = cols;
+                    pty_rows = rows;
+                    let _ = channel.request_pty_size(cols, rows, None, None);
+                }
+                Ok(SessionCommand::ReconnectNow) => {
+                    // Ignore while connected.
+                }
+                Ok(SessionCommand::ListDirectory { path, reply_tx }) => {
+                    sess.set_blocking(true);
+                    let result = sftp_list_directory(&sess, &path);
+                    sess.set_blocking(false);
+                    let _ = reply_tx.send(result);
+                }
+                Ok(SessionCommand::ReadFile {
+                    path,
+                    max_bytes,
+                    reply_tx,
+                }) => {
+                    sess.set_blocking(true);
+                    let result = sftp_read_file(&sess, &path, max_bytes);
+                    sess.set_blocking(false);
+                    let _ = reply_tx.send(result);
+                }
+                Ok(SessionCommand::Shutdown) => {
+                    let _ = channel.close();
+                    let _ = channel.wait_close();
+                    emit_status(SessionStatus::Disconnected);
+                    break 'outer;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    let _ = channel.close();
+                    let _ = channel.wait_close();
+                    emit_status(SessionStatus::Disconnected);
+                    break 'outer;
+                }
+                Err(TryRecvError::Empty) => {}
+            }
+
+            let mut buf = [0u8; 4096];
+            match channel.read(&mut buf) {
+                Ok(0) => {
+                    break;
+                }
+                Ok(n) => {
+                    let _ = app_handle.emit(&output_event, buf[..n].to_vec());
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(e) => {
+                    emit_status(SessionStatus::Error(format!("channel read: {e}")));
+                    break;
+                }
+            }
+
+            if last_resource_emit.elapsed() >= Duration::from_secs(5) {
                 sess.set_blocking(true);
-                let result = sftp_list_directory(&sess, &path);
+                let snapshot = collect_resource_snapshot(&sess, &config.project_path);
                 sess.set_blocking(false);
-                let _ = reply_tx.send(result);
+                let _ = app_handle.emit(&resource_event, snapshot);
+                last_resource_emit = Instant::now();
             }
-            Ok(SessionCommand::ReadFile {
-                path,
-                max_bytes,
-                reply_tx,
-            }) => {
-                sess.set_blocking(true);
-                let result = sftp_read_file(&sess, &path, max_bytes);
-                sess.set_blocking(false);
-                let _ = reply_tx.send(result);
-            }
-            Ok(SessionCommand::Shutdown) => break,
-            Err(TryRecvError::Disconnected) => break,
-            Err(TryRecvError::Empty) => {
-                // proceed to read
-            }
+
+            std::thread::sleep(Duration::from_millis(10));
         }
 
-        let mut buf = [0u8; 4096];
-        match channel.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                let _ = app_handle.emit(&output_event, buf[..n].to_vec());
-            }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                // no data
-            }
-            Err(e) => {
-                emit_status(SessionStatus::Error(format!("channel read: {e}")));
-                break;
-            }
-        }
+        // Cleanup on drop.
+        let _ = channel.close();
+        let _ = channel.wait_close();
 
-        // Periodic resource snapshot (every 5 seconds)
-        if last_resource_emit.elapsed() >= Duration::from_secs(5) {
-            sess.set_blocking(true);
-            let snapshot = collect_resource_snapshot(&sess, &config.project_path);
-            sess.set_blocking(false);
-            let _ = app_handle.emit(&resource_event, snapshot);
-            last_resource_emit = Instant::now();
-        }
-
-        std::thread::sleep(Duration::from_millis(10));
+        disconnect_started = Instant::now();
+        next_attempt_num = 1;
+        next_attempt_at = disconnect_started
+            + Duration::from_secs(RETRY_SCHEDULE_SECS[0])
+            + Duration::from_millis(jitter_ms);
+        continue 'outer;
     }
-
-    // 15) cleanup
-    let _ = channel.close();
-    let _ = channel.wait_close();
-    emit_status(SessionStatus::Disconnected);
 }

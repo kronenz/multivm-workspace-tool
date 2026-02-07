@@ -883,6 +883,11 @@ html, body {
   animation: pulse 1.5s infinite;
 }
 
+.pane-status-dot.reconnecting {
+  background: var(--accent);
+  animation: pulse 1.2s infinite;
+}
+
 .pane-status-dot.connected {
   background: var(--success);
 }
@@ -895,12 +900,43 @@ html, body {
   background: var(--text-dim);
 }
 
+.pane-status-dot.reconnect_failed {
+  background: var(--text-dim);
+}
+
 .pane-host-label {
   font-size: 11px;
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.pane-status-text {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btn-pane-reconnect {
+  margin-left: auto;
+  padding: 2px 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.btn-pane-reconnect:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.25);
+  color: var(--text-primary);
 }
 
 @keyframes pulse {

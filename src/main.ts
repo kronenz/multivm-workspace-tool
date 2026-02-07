@@ -1080,7 +1080,7 @@ async function handleActivateWorkset(worksetId: string): Promise<void> {
 
       // Skip wiring for failed connections
       if (!session.session_id) {
-        updatePaneStatus(pane, "error");
+        updatePaneStatus(pane, "error", session.status);
         continue;
       }
 
@@ -1095,14 +1095,29 @@ async function handleActivateWorkset(worksetId: string): Promise<void> {
       eventUnlisteners.push(unlisten1);
 
       // Session status → update pane status dot
-      const unlisten2 = await listen<string | { error: string }>(
+      const unlisten2 = await listen<
+        string | { error: string } | { reconnecting: { attempt: number; max: number } }
+      >(
         `session-status-${session.session_id}`,
         (event) => {
           const payload = event.payload;
           if (typeof payload === "string") {
-            updatePaneStatus(pane, payload);
-          } else if (payload && typeof payload === "object" && "error" in payload) {
-            updatePaneStatus(pane, "error");
+            if (payload === 'reconnect_failed') {
+              updatePaneStatus(
+                pane,
+                'reconnect_failed',
+                'Connection lost. Click to reconnect manually.',
+              );
+            } else {
+              updatePaneStatus(pane, payload);
+            }
+          } else if (payload && typeof payload === "object") {
+            if ('error' in payload) {
+              updatePaneStatus(pane, 'error', payload.error);
+            } else if ('reconnecting' in payload) {
+              const r = payload.reconnecting;
+              updatePaneStatus(pane, 'reconnecting', `Reconnecting... (${r.attempt}/${r.max})`);
+            }
           }
         }
       );
@@ -1207,6 +1222,20 @@ window.addEventListener("DOMContentLoaded", () => {
     }
     if (target.id === 'btn-workspace-panel') {
       togglePanel();
+    }
+
+    const reconnectBtn = target.closest('.btn-pane-reconnect') as HTMLButtonElement | null;
+    if (reconnectBtn) {
+      const paneEl = reconnectBtn.closest('.grid-pane') as HTMLElement | null;
+      const idx = paneEl?.dataset.paneIndex ? parseInt(paneEl.dataset.paneIndex, 10) : NaN;
+      const pane = activeWorkspace && Number.isFinite(idx) ? activeWorkspace.panes[idx] : null;
+      const sessionId = pane?.sessionId;
+      if (pane && sessionId) {
+        updatePaneStatus(pane, 'reconnecting', 'Reconnecting... (1/3)');
+        invoke('terminal_reconnect', { sessionId }).catch((err) => {
+          updatePaneStatus(pane, 'error', `Reconnect failed: ${String(err)}`);
+        });
+      }
     }
 
     // If the user changed active pane while panel is open, keep file browser in sync.
