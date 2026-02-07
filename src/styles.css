@@ -171,6 +171,7 @@ html, body {
 
 #main-content {
   flex: 1;
+  position: relative;
   overflow-y: auto;
   padding: 28px 32px;
   background: var(--bg-primary);
@@ -547,4 +548,156 @@ html, body {
 
 .toast-error {
   background: var(--danger);
+}
+
+/* ── Workspace View ── */
+
+#workspace-view {
+  display: none;
+  flex-direction: column;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  background: var(--bg-primary);
+}
+
+#workspace-view.active {
+  display: flex;
+}
+
+/* ── Layout Toolbar ── */
+
+.layout-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.layout-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+  outline: none;
+}
+
+.layout-toolbar-btn:hover {
+  background: var(--bg-card);
+  border-color: var(--text-dim);
+  color: var(--text-primary);
+}
+
+.layout-toolbar-btn.active {
+  background: var(--accent);
+  color: var(--bg-primary);
+  border-color: var(--accent);
+}
+
+.btn-disconnect-all {
+  margin-left: auto;
+}
+
+/* ── Grid Container ── */
+
+.grid-container {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-primary);
+  overflow: hidden;
+}
+
+/* ── Grid Pane ── */
+
+.grid-pane {
+  position: relative;
+  overflow: hidden;
+  background: #000;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  min-height: 0;
+  min-width: 0;
+}
+
+.grid-pane.active {
+  border-color: var(--accent);
+  border-width: 2px;
+}
+
+.grid-pane-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+/* ── Pane Status Bar ── */
+
+.pane-status-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 10;
+  font-family: 'JetBrains Mono', Menlo, Monaco, Consolas, 'Courier New', monospace;
+}
+
+.pane-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+
+.pane-status-dot.connecting {
+  background: var(--accent);
+  animation: pulse 1.5s infinite;
+}
+
+.pane-status-dot.connected {
+  background: var(--success);
+}
+
+.pane-status-dot.error {
+  background: var(--danger);
+}
+
+.pane-status-dot.disconnected {
+  background: var(--text-dim);
+}
+
+.pane-host-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.4; }
+  100% { opacity: 1; }
 }

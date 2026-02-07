@@ -1,4 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { createLayoutToolbar } from './grid.ts';
+import type { PaneState } from './workspace.ts';
+import { createWorkspace, attachTerminal, destroyWorkspace, setPaneHostLabel, writeToPaneBuffer, updatePaneStatus } from './workspace.ts';
 
 interface WorksetSummary {
   id: string;
@@ -44,9 +49,23 @@ interface UpdateWorksetInput {
   grid_layout?: GridLayout;
 }
 
+interface SessionInfo {
+  session_id: string;
+  connection_index: number;
+  host: string;
+  status: string;
+}
+
 let selectedWorksetId: string | null = null;
 let allSummaries: WorksetSummary[] = [];
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
+let activeWorkspace: {
+  worksetId: string;
+  panes: PaneState[];
+  sessionInfos: SessionInfo[];
+} | null = null;
+
+let eventUnlisteners: UnlistenFn[] = [];
 
 function $(id: string): HTMLElement {
   const el = document.getElementById(id);
@@ -266,19 +285,35 @@ function extractFormData(
   };
 }
 
+function showWorkspaceView(): void {
+  $("empty-state").style.display = "none";
+  $("workset-detail").style.display = "none";
+  $("workset-form").style.display = "none";
+  const wsView = $("workspace-view");
+  wsView.classList.add("active");
+}
+
+function hideWorkspaceView(): void {
+  const wsView = $("workspace-view");
+  wsView.classList.remove("active");
+}
+
 function showEmptyState(): void {
+  hideWorkspaceView();
   $("empty-state").style.display = "";
   $("workset-detail").style.display = "none";
   $("workset-form").style.display = "none";
 }
 
 function showDetailView(): void {
+  hideWorkspaceView();
   $("empty-state").style.display = "none";
   $("workset-detail").style.display = "";
   $("workset-form").style.display = "none";
 }
 
 function showFormView(): void {
+  hideWorkspaceView();
   $("empty-state").style.display = "none";
   $("workset-detail").style.display = "none";
   $("workset-form").style.display = "";
@@ -359,6 +394,7 @@ function renderWorksetDetail(workset: Workset): void {
         </div>
       </div>
       <div class="detail-header-actions">
+        <button class="btn btn-primary" id="btn-activate-workset">Activate</button>
         <button class="btn btn-ghost" id="btn-edit-workset">Edit</button>
         <button class="btn btn-danger" id="btn-delete-workset">Delete</button>
       </div>
@@ -382,6 +418,11 @@ function renderWorksetDetail(workset: Workset): void {
   });
   $("btn-delete-workset").addEventListener("click", () => {
     deleteWorkset(workset.id);
+  });
+  $("btn-activate-workset").addEventListener("click", () => {
+    if (selectedWorksetId) {
+      handleActivateWorkset(selectedWorksetId);
+    }
   });
 }
 
@@ -611,6 +652,176 @@ function updateConnectionCount(): void {
   countEl.textContent = `(${count}/10)`;
 }
 
+async function cleanupWorkspace(): Promise<void> {
+  // Unregister all event listeners
+  for (const unlisten of eventUnlisteners) {
+    unlisten();
+  }
+  eventUnlisteners = [];
+
+  // Deactivate SSH sessions
+  try {
+    await invoke("deactivate_workset");
+  } catch (err) {
+    console.error("Failed to deactivate:", err);
+  }
+
+  // Destroy workspace UI
+  if (activeWorkspace) {
+    destroyWorkspace(activeWorkspace.panes);
+    activeWorkspace = null;
+  }
+}
+
+async function handleActivateWorkset(worksetId: string): Promise<void> {
+  try {
+    const workset = await invoke<Workset>("get_workset", { id: worksetId });
+    if (!workset) {
+      showToast("Workset not found", "error");
+      return;
+    }
+
+    // Collect passwords for password-auth connections
+    const passwords: (string | null)[] = workset.connections.map((conn) => {
+      if (conn.auth_method === "password") {
+        const pw = window.prompt(`Password for ${conn.user}@${conn.host}:`);
+        return pw;
+      }
+      return null;
+    });
+
+    // If any required password was cancelled, abort
+    if (workset.connections.some((c, i) => c.auth_method === "password" && passwords[i] === null)) {
+      showToast("Activation cancelled", "error");
+      return;
+    }
+
+    // Clean up any existing workspace
+    if (activeWorkspace) {
+      await cleanupWorkspace();
+    }
+
+    // Switch to workspace view
+    showWorkspaceView();
+
+    // Determine grid layout
+    const rows = workset.grid_layout.rows;
+    const cols = workset.grid_layout.cols;
+    const preset = workset.grid_layout.preset ?? `${rows}x${cols}`;
+
+    // Create grid and panes
+    const gridContainer = $("grid-container");
+    const toolbarContainer = $("layout-toolbar");
+    const panes = createWorkspace(gridContainer, rows, cols, workset.connections.length);
+
+    // Render toolbar
+    createLayoutToolbar(toolbarContainer, preset, (_newPreset) => {
+      // Layout preset switching not implemented in this batch
+    });
+
+    // Set host labels and attach terminals
+    for (let i = 0; i < Math.min(panes.length, workset.connections.length); i++) {
+      const conn = workset.connections[i];
+      setPaneHostLabel(panes[i], `${conn.user}@${conn.host}:${conn.port}`);
+      attachTerminal(panes[i]);
+    }
+
+    // Store workspace state
+    activeWorkspace = {
+      worksetId,
+      panes,
+      sessionInfos: [],
+    };
+
+    // Invoke SSH activation via Tauri IPC
+    const sessions = await invoke<SessionInfo[]>("activate_workset", {
+      worksetId,
+      passwords,
+    });
+
+    activeWorkspace.sessionInfos = sessions;
+
+    // Map session IDs to panes and wire event listeners
+    for (const session of sessions) {
+      const pane = panes[session.connection_index];
+      if (!pane) continue;
+
+      pane.sessionId = session.session_id;
+
+      // Skip wiring for failed connections
+      if (!session.session_id) {
+        updatePaneStatus(pane, "error");
+        continue;
+      }
+
+      // Terminal output → write to terminal via OutputBuffer
+      const unlisten1 = await listen<number[]>(
+        `terminal-output-${session.session_id}`,
+        (event) => {
+          const data = new Uint8Array(event.payload);
+          writeToPaneBuffer(pane, data);
+        }
+      );
+      eventUnlisteners.push(unlisten1);
+
+      // Session status → update pane status dot
+      const unlisten2 = await listen<string | { error: string }>(
+        `session-status-${session.session_id}`,
+        (event) => {
+          const payload = event.payload;
+          if (typeof payload === "string") {
+            updatePaneStatus(pane, payload);
+          } else if (payload && typeof payload === "object" && "error" in payload) {
+            updatePaneStatus(pane, "error");
+          }
+        }
+      );
+      eventUnlisteners.push(unlisten2);
+
+      // Terminal input → send to SSH via IPC
+      if (pane.terminal) {
+        const inputDisposable = pane.terminal.terminal.onData((data: string) => {
+          invoke("terminal_input", { sessionId: session.session_id, data }).catch(
+            console.error
+          );
+        });
+        pane.terminal.disposables.push(inputDisposable);
+
+        // Terminal resize → send to SSH via IPC
+        const resizeDisposable = pane.terminal.terminal.onResize(
+          ({ cols, rows }: { cols: number; rows: number }) => {
+            invoke("terminal_resize", {
+              sessionId: session.session_id,
+              cols,
+              rows,
+            }).catch(console.error);
+          }
+        );
+        pane.terminal.disposables.push(resizeDisposable);
+      }
+    }
+
+    showToast("Workspace activated", "success");
+  } catch (err) {
+    showToast(`Activation failed: ${String(err)}`, "error");
+  }
+}
+
+async function handleDisconnectAll(): Promise<void> {
+  if (!activeWorkspace) return;
+
+  await cleanupWorkspace();
+  hideWorkspaceView();
+
+  if (selectedWorksetId) {
+    selectWorkset(selectedWorksetId);
+  } else {
+    showEmptyState();
+  }
+
+  showToast("Disconnected all sessions", "success");
+}
+
 function wireSearch(): void {
   const searchInput = document.getElementById("workset-search") as HTMLInputElement | null;
   searchInput?.addEventListener("input", () => {
@@ -630,6 +841,12 @@ window.addEventListener("DOMContentLoaded", () => {
   loadWorksets();
   wireSearch();
 
+  getCurrentWindow().onCloseRequested(async () => {
+    if (activeWorkspace) {
+      await cleanupWorkspace();
+    }
+  });
+
   $("btn-new-workset").addEventListener("click", () => {
     showCreateForm();
   });
@@ -637,5 +854,12 @@ window.addEventListener("DOMContentLoaded", () => {
   const emptyCreateBtn = document.getElementById("btn-empty-create");
   emptyCreateBtn?.addEventListener("click", () => {
     showCreateForm();
+  });
+
+  document.addEventListener("click", (e) => {
+    const target = e.target as HTMLElement;
+    if (target.id === "btn-disconnect-all") {
+      handleDisconnectAll();
+    }
   });
 });
