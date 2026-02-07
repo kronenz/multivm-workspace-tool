@@ -6,11 +6,11 @@
 
 ## 스파이크 현황
 
-| # | 스파이크 | 우선순위 | 상태 | 연관 리스크 |
-|---|----------|----------|------|-------------|
-| SPIKE-1 | Tauri + xterm.js Latency | **CRITICAL** | 대기 | RISK-1 |
-| SPIKE-2 | SSH 연결 풀링 Stress Test | **HIGH** | 대기 | RISK-2, RISK-4 |
-| SPIKE-3 | 이기종 VM 리소스 수집 호환성 | **MEDIUM** | 대기 | RISK-3 |
+| # | 스파이크 | 우선순위 | 상태 | 연관 리스크 | 문서 |
+|---|----------|----------|------|-------------|------|
+| SPIKE-1 | Tauri + xterm.js Latency | **CRITICAL** | 대기 | RISK-1 | [실행 계획](./spike-1-tauri-xterm-latency.md) |
+| SPIKE-2 | SSH 연결 풀링 Stress Test | **HIGH** | 대기 | RISK-2, RISK-4 | [실행 계획](./spike-2-ssh-pooling-stress.md) |
+| SPIKE-3 | 이기종 VM 리소스 수집 호환성 | **MEDIUM** | 대기 | RISK-3 | (TODO: 실행 계획 문서화) |
 
 > 상세 사양은 [architecture.md § Technical Spikes](../architecture.md#technical-spikes) 및 [mvp-spec.md § Technical Spike Priorities](../../qa/mvp-spec.md#technical-spike-priorities-from-architecture-document) 참조.
 
