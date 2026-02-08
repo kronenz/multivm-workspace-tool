@@ -687,6 +687,50 @@ html, body {
 .metric.crit .v { color: var(--danger); }
 .metric.na .v { color: var(--text-dim); }
 
+.metric-bar {
+  display: inline-block;
+  width: 32px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  vertical-align: middle;
+  overflow: hidden;
+}
+
+.metric-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.metric-bar-fill.ok { background: var(--success); }
+.metric-bar-fill.warn { background: #f1c40f; }
+.metric-bar-fill.crit { background: var(--danger); }
+.metric-bar-fill.na { background: transparent; }
+
+.conn-advanced {
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
+.conn-advanced-toggle {
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 4px 0;
+  user-select: none;
+}
+
+.conn-advanced-toggle:hover {
+  color: var(--text-secondary);
+}
+
+.conn-advanced[open] .conn-advanced-toggle {
+  margin-bottom: 8px;
+}
+
 /* ── Workspace Split + Side Panel ── */
 
 .workspace-split {
@@ -857,8 +901,8 @@ html, body {
     box-shadow: -10px 0 30px rgba(0, 0, 0, 0.45);
   }
 
-  .workspace-panel-resizer {
-    display: none !important;
+  #workspace-view .workspace-panel-resizer {
+    display: none;
   }
 
   #workspace-view.panel-open .workspace-panel {
@@ -1075,8 +1119,46 @@ html, body {
   text-overflow: ellipsis;
 }
 
+.pane-status-spacer {
+  flex: 1;
+  min-width: 8px;
+}
+
+.pane-content-type-select {
+  height: 18px;
+  padding: 1px 20px 1px 6px;
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 16px;
+  outline: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23a0a0b0'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 7px center;
+}
+
+.pane-content-type-select:hover {
+  border-color: rgba(255, 255, 255, 0.25);
+  color: var(--text-primary);
+}
+
+:root[data-theme='light'] .pane-content-type-select {
+  background: rgba(255, 255, 255, 0.6);
+  border-color: rgba(0, 0, 0, 0.14);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%234a4a5a'/%3E%3C/svg%3E");
+}
+
+.pane-content-type-select:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 2px var(--accent-muted);
+}
+
 .btn-pane-reconnect {
-  margin-left: auto;
+  margin-left: 8px;
   padding: 2px 8px;
   background: transparent;
   color: var(--text-secondary);
@@ -1088,6 +1170,77 @@ html, body {
 }
 
 .btn-pane-reconnect:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.25);
+  color: var(--text-primary);
+}
+
+.btn-pane-restart-cli {
+  padding: 2px 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  margin-left: 4px;
+}
+
+/* ── Pane Non-Terminal Content ── */
+
+.pane-file-browser-content,
+.pane-markdown-content {
+  background: var(--bg-secondary);
+  overflow: auto;
+  padding: 10px 12px;
+}
+
+.pane-content-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  background: var(--pane-status-bg);
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.btn-pane-refresh {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.btn-pane-refresh:hover {
+  color: var(--accent);
+}
+
+.pane-file-browser-content::-webkit-scrollbar,
+.pane-markdown-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.pane-file-browser-content::-webkit-scrollbar-thumb,
+.pane-markdown-content::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+.pane-markdown-placeholder {
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 14px 6px;
+}
+
+.btn-pane-restart-cli:hover {
   background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.25);
   color: var(--text-primary);
@@ -1248,4 +1401,32 @@ html, body {
 .markdown-body th {
   background: rgba(0, 212, 255, 0.08);
   color: var(--text-secondary);
+}
+
+/* ── highlight.js light-mode overrides ── */
+/* Base theme (github-dark) imported via markdown.ts. Override for light mode. */
+
+:root[data-theme='light'] .hljs {
+  background: var(--code-block-bg);
+  color: #24292e;
+}
+:root[data-theme='light'] .hljs-keyword,
+:root[data-theme='light'] .hljs-selector-tag,
+:root[data-theme='light'] .hljs-type { color: #d73a49; }
+:root[data-theme='light'] .hljs-string,
+:root[data-theme='light'] .hljs-attr { color: #032f62; }
+:root[data-theme='light'] .hljs-number,
+:root[data-theme='light'] .hljs-literal { color: #005cc5; }
+:root[data-theme='light'] .hljs-comment,
+:root[data-theme='light'] .hljs-doctag { color: #6a737d; }
+:root[data-theme='light'] .hljs-title,
+:root[data-theme='light'] .hljs-function { color: #6f42c1; }
+:root[data-theme='light'] .hljs-built_in { color: #e36209; }
+:root[data-theme='light'] .hljs-variable,
+:root[data-theme='light'] .hljs-template-variable { color: #e36209; }
+
+/* Ensure hljs background inherits from our code-block-bg */
+/* biome-ignore lint/style/noDescendingSpecificity: keep this override close to markdown viewer styles */
+.markdown-body pre .hljs {
+  background: transparent;
 }
