@@ -108,6 +108,8 @@ let panelWidthPx: number | null = null;
 
 let currentTheme: ThemeName = 'dark';
 
+let isClosing = false;
+
 function $(id: string): HTMLElement {
   const el = document.getElementById(id);
   if (!el) throw new Error(`Element #${id} not found`);
@@ -1310,9 +1312,26 @@ window.addEventListener("DOMContentLoaded", () => {
   wireSearch();
   void initTheme();
 
-  getCurrentWindow().onCloseRequested(async () => {
-    if (activeWorkspace) {
-      await cleanupWorkspace();
+  getCurrentWindow().onCloseRequested(async (event) => {
+    // Tauri may wait for this handler; never block window close indefinitely.
+    if (isClosing) return;
+    isClosing = true;
+    try {
+      event?.preventDefault?.();
+    } catch {
+      // ignore
+    }
+
+    const cleanup = activeWorkspace ? cleanupWorkspace() : Promise.resolve();
+    await Promise.race([
+      cleanup,
+      new Promise<void>((resolve) => setTimeout(resolve, 1500)),
+    ]);
+
+    try {
+      await getCurrentWindow().close();
+    } catch {
+      // ignore
     }
   });
 
