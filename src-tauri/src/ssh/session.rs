@@ -36,6 +36,7 @@ pub struct ResourceSnapshot {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum SshError {
     TcpConnect(String),
     Handshake(String),
@@ -67,6 +68,9 @@ pub enum SessionCommand {
     Write(Vec<u8>),
     Resize { cols: u32, rows: u32 },
     ReconnectNow,
+    RestartAiCli {
+        reply_tx: mpsc::Sender<Result<(), String>>,
+    },
     ListDirectory {
         path: String,
         reply_tx: mpsc::Sender<Result<Vec<FileEntry>, String>>,
@@ -100,10 +104,13 @@ pub struct SshSessionConfig {
     pub password: Option<String>,
     pub project_path: String,
     pub ai_cli_command: Option<String>,
+    pub keepalive_interval_secs: Option<u32>,
+    pub reconnect_max_retries: Option<u32>,
 }
 
 pub struct SshSessionHandle {
     pub id: String,
+    #[allow(dead_code)]
     pub host_display: String,
     cmd_tx: mpsc::Sender<SessionCommand>,
     worker: Option<JoinHandle<()>>,
@@ -164,6 +171,18 @@ impl SshSessionHandle {
         reply_rx
             .recv_timeout(Duration::from_secs(15))
             .map_err(|e| SshError::Channel(format!("list_directory response timeout: {e}")))?
+            .map_err(SshError::Channel)
+    }
+
+    pub fn restart_ai_cli(&self) -> Result<(), SshError> {
+        let (reply_tx, reply_rx) = mpsc::channel::<Result<(), String>>();
+        self.cmd_tx
+            .send(SessionCommand::RestartAiCli { reply_tx })
+            .map_err(|e| SshError::Send(e.to_string()))?;
+
+        reply_rx
+            .recv_timeout(Duration::from_secs(5))
+            .map_err(|e| SshError::Channel(format!("restart_ai_cli response timeout: {e}")))?
             .map_err(SshError::Channel)
     }
 
@@ -467,6 +486,21 @@ fn parse_cpu_percent_from_top(output: &str) -> Option<f64> {
     }
 }
 
+fn parse_cpu_percent_from_top_darwin(output: &str) -> Option<f64> {
+    // macOS top output: "CPU usage: X% user, Y% sys, Z% idle"
+    let line = output.lines().find(|l| l.contains("CPU usage:"))?;
+    for part in line.split(',') {
+        let trimmed = part.trim();
+        if trimmed.ends_with("idle") {
+            let num_str = trimmed.split('%').next()?.trim();
+            let num = num_str.split_whitespace().last()?;
+            let idle = num.parse::<f64>().ok()?;
+            return Some((100.0 - idle).max(0.0).min(100.0));
+        }
+    }
+    None
+}
+
 fn parse_ram_percent_from_free(output: &str) -> Option<f64> {
     let line = output.lines().find(|l| l.trim_start().starts_with("Mem:"))?;
     let fields: Vec<&str> = line.split_whitespace().collect();
@@ -484,6 +518,44 @@ fn parse_ram_percent_from_free(output: &str) -> Option<f64> {
     Some(((used / total) * 100.0).max(0.0).min(100.0))
 }
 
+fn parse_ram_from_vm_stat(vm_stat_output: &str, sysctl_output: &str) -> Option<f64> {
+    // vm_stat header: "Mach Virtual Memory Statistics: (page size of 16384 bytes)"
+    let first_line = vm_stat_output.lines().next()?;
+    let page_size: u64 = first_line
+        .split("page size of ")
+        .nth(1)?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()?;
+
+    let get_pages = |label: &str| -> Option<u64> {
+        let line = vm_stat_output
+            .lines()
+            .find(|l| l.trim_start().starts_with(label))?;
+        let rhs = line.split(':').nth(1)?.trim();
+        rhs.trim_end_matches('.').parse::<u64>().ok()
+    };
+
+    let free = get_pages("Pages free")?;
+    let inactive = get_pages("Pages inactive").unwrap_or(0);
+    let speculative = get_pages("Pages speculative").unwrap_or(0);
+
+    let total_bytes: u64 = sysctl_output.trim().parse().ok()?;
+    if page_size == 0 {
+        return None;
+    }
+    let total_pages = total_bytes / page_size;
+    if total_pages == 0 {
+        return None;
+    }
+
+    let free_pages = free + inactive + speculative;
+    let used_pages = total_pages.saturating_sub(free_pages);
+    let pct = (used_pages as f64 / total_pages as f64) * 100.0;
+    Some(pct.max(0.0).min(100.0))
+}
+
 fn parse_disk_percent_from_df(output: &str) -> Option<f64> {
     let line = output.lines().skip(1).find(|l| !l.trim().is_empty())?;
     let fields: Vec<&str> = line.split_whitespace().collect();
@@ -499,9 +571,41 @@ fn now_epoch() -> u64 {
         .as_secs()
 }
 
-fn collect_resource_snapshot(sess: &Session, project_path: &str) -> ResourceSnapshot {
-    let cpu_output = exec_read_to_string(sess, "LANG=C top -bn1");
-    let free_output = exec_read_to_string(sess, "LANG=C free -m");
+fn detect_remote_os(sess: &Session) -> &'static str {
+    match exec_read_to_string(sess, "uname -s") {
+        Ok(output) => {
+            if output.trim().eq_ignore_ascii_case("darwin") {
+                "darwin"
+            } else {
+                "linux"
+            }
+        }
+        Err(_) => "linux",
+    }
+}
+
+fn collect_resource_snapshot(sess: &Session, project_path: &str, remote_os: &str) -> ResourceSnapshot {
+    let (cpu_percent, ram_percent) = if remote_os == "darwin" {
+        let cpu_output = exec_read_to_string(sess, "LANG=C top -l 1 -s 0");
+        let cpu = cpu_output
+            .ok()
+            .and_then(|o| parse_cpu_percent_from_top_darwin(&o));
+
+        let vm_stat_output = exec_read_to_string(sess, "vm_stat");
+        let sysctl_output = exec_read_to_string(sess, "sysctl -n hw.memsize");
+        let ram = match (vm_stat_output.ok(), sysctl_output.ok()) {
+            (Some(vs), Some(sc)) => parse_ram_from_vm_stat(&vs, &sc),
+            _ => None,
+        };
+
+        (cpu, ram)
+    } else {
+        let cpu_output = exec_read_to_string(sess, "LANG=C top -bn1");
+        let free_output = exec_read_to_string(sess, "LANG=C free -m");
+        let cpu = cpu_output.ok().and_then(|o| parse_cpu_percent_from_top(&o));
+        let ram = free_output.ok().and_then(|o| parse_ram_percent_from_free(&o));
+        (cpu, ram)
+    };
 
     let preferred_path = if project_path.trim().is_empty() {
         "/"
@@ -517,8 +621,6 @@ fn collect_resource_snapshot(sess: &Session, project_path: &str) -> ResourceSnap
         df_output = exec_read_to_string(sess, "LANG=C df -P /");
     }
 
-    let cpu_percent = cpu_output.ok().and_then(|o| parse_cpu_percent_from_top(&o));
-    let ram_percent = free_output.ok().and_then(|o| parse_ram_percent_from_free(&o));
     let disk_percent = df_output.ok().and_then(|o| parse_disk_percent_from_df(&o));
 
     ResourceSnapshot {
@@ -581,12 +683,13 @@ fn session_worker(
     app_handle: tauri::AppHandle,
     cmd_rx: mpsc::Receiver<SessionCommand>,
 ) {
-    const MAX_RETRIES: u32 = 3;
-    const RETRY_SCHEDULE_SECS: [u64; 3] = [0, 5, 10];
+    let max_retries = config.reconnect_max_retries.unwrap_or(3);
+    let retry_schedule: &[u64] = &[0, 5, 10, 15, 30];
 
     let status_event = format!("session-status-{}", config.id);
     let output_event = format!("terminal-output-{}", config.id);
     let resource_event = format!("resource-update-{}", config.id);
+    let ai_cli_exit_event = format!("ai-cli-exited-{}", config.id);
 
     let emit_status = |status: SessionStatus| {
         let _ = app_handle.emit(&status_event, status);
@@ -665,7 +768,8 @@ fn session_worker(
             return Err(format!("not authenticated on {addr_str}"));
         }
 
-        sess.set_keepalive(true, 15);
+        let interval = config.keepalive_interval_secs.unwrap_or(15);
+        sess.set_keepalive(true, interval);
 
         // PTY + shell
         let mut channel: Channel = sess
@@ -683,7 +787,7 @@ fn session_worker(
                 .map_err(|e| format!("write cd command: {e}"))?;
         }
 
-        // Only auto-run AI CLI on first activation.
+        // Auto-run AI CLI when configured.
         if run_ai_cli {
             if let Some(cmd) = config.ai_cli_command.as_deref() {
                 if !cmd.is_empty() {
@@ -705,7 +809,7 @@ fn session_worker(
         } else if next_attempt_num > 0 {
             emit_status(SessionStatus::Reconnecting {
                 attempt: next_attempt_num,
-                max: MAX_RETRIES,
+                max: max_retries,
             });
         }
 
@@ -726,6 +830,9 @@ fn session_worker(
                     pty_cols = cols;
                     pty_rows = rows;
                 }
+                Ok(SessionCommand::RestartAiCli { reply_tx }) => {
+                    let _ = reply_tx.send(Err("not connected".to_string()));
+                }
                 Ok(SessionCommand::ListDirectory { reply_tx, .. }) => {
                     let _ = reply_tx.send(Err("not connected".to_string()));
                 }
@@ -744,7 +851,11 @@ fn session_worker(
         }
 
         // Attempt connection.
-        let run_ai_cli = initial_connect;
+        let run_ai_cli = config
+            .ai_cli_command
+            .as_deref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
         let connect_result = connect_shell(run_ai_cli, pty_cols, pty_rows);
 
         let (sess, mut channel) = match connect_result {
@@ -772,6 +883,9 @@ fn session_worker(
                                 pty_cols = cols;
                                 pty_rows = rows;
                             }
+                            Ok(SessionCommand::RestartAiCli { reply_tx }) => {
+                                let _ = reply_tx.send(Err("not connected".to_string()));
+                            }
                             Ok(SessionCommand::ListDirectory { reply_tx, .. }) => {
                                 let _ = reply_tx.send(Err("not connected".to_string()));
                             }
@@ -787,7 +901,7 @@ fn session_worker(
                 }
 
                 // Transient failures: keep retrying within budget.
-                if next_attempt_num >= MAX_RETRIES {
+                if next_attempt_num >= max_retries {
                     emit_status(SessionStatus::ReconnectFailed);
                     // Manual wait
                     loop {
@@ -805,6 +919,9 @@ fn session_worker(
                                 pty_cols = cols;
                                 pty_rows = rows;
                             }
+                            Ok(SessionCommand::RestartAiCli { reply_tx }) => {
+                                let _ = reply_tx.send(Err("not connected".to_string()));
+                            }
                             Ok(SessionCommand::ListDirectory { reply_tx, .. }) => {
                                 let _ = reply_tx.send(Err("not connected".to_string()));
                             }
@@ -820,9 +937,9 @@ fn session_worker(
                 }
 
                 // Schedule next attempt.
-                let next = (next_attempt_num + 1).min(MAX_RETRIES);
+                let next = (next_attempt_num + 1).min(max_retries);
                 let schedule_idx = (next.saturating_sub(1)) as usize;
-                let delay = RETRY_SCHEDULE_SECS.get(schedule_idx).copied().unwrap_or(10);
+                let delay = retry_schedule.get(schedule_idx).copied().unwrap_or(10);
                 next_attempt_num = next;
                 next_attempt_at = disconnect_started
                     + Duration::from_secs(delay)
@@ -834,6 +951,9 @@ fn session_worker(
         // Connected
         emit_status(SessionStatus::Connected);
         initial_connect = false;
+
+        // Detect remote OS once per connection (before switching to non-blocking).
+        let remote_os = detect_remote_os(&sess);
 
         sess.set_blocking(false);
         let mut last_resource_emit = Instant::now()
@@ -856,6 +976,24 @@ fn session_worker(
                 }
                 Ok(SessionCommand::ReconnectNow) => {
                     // Ignore while connected.
+                }
+                Ok(SessionCommand::RestartAiCli { reply_tx }) => {
+                    let cmd = match config.ai_cli_command.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                        Some(v) => v,
+                        None => {
+                            let _ = reply_tx.send(Err("no AI CLI command configured".to_string()));
+                            continue;
+                        }
+                    };
+
+                    let write_bytes = format!("{}\n", cmd).into_bytes();
+                    let result = channel_write_all_nonblocking(
+                        &mut channel,
+                        &write_bytes,
+                        Duration::from_secs(5),
+                    )
+                    .map_err(|e| format!("write ai cli command: {e}"));
+                    let _ = reply_tx.send(result);
                 }
                 Ok(SessionCommand::ListDirectory { path, reply_tx }) => {
                     let result = sftp_list_directory(&sess, &path);
@@ -887,6 +1025,7 @@ fn session_worker(
             let mut buf = [0u8; 4096];
             match channel.read(&mut buf) {
                 Ok(0) => {
+                    let _ = app_handle.emit(&ai_cli_exit_event, ());
                     break;
                 }
                 Ok(n) => {
@@ -900,7 +1039,7 @@ fn session_worker(
             }
 
             if last_resource_emit.elapsed() >= Duration::from_secs(5) {
-                let snapshot = collect_resource_snapshot(&sess, &config.project_path);
+                let snapshot = collect_resource_snapshot(&sess, &config.project_path, remote_os);
                 let _ = app_handle.emit(&resource_event, snapshot);
                 last_resource_emit = Instant::now();
             }
@@ -915,7 +1054,7 @@ fn session_worker(
         disconnect_started = Instant::now();
         next_attempt_num = 1;
         next_attempt_at = disconnect_started
-            + Duration::from_secs(RETRY_SCHEDULE_SECS[0])
+            + Duration::from_secs(retry_schedule.get(0).copied().unwrap_or(0))
             + Duration::from_millis(jitter_ms);
         continue 'outer;
     }
