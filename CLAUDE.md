@@ -9,11 +9,11 @@
 구조, 규칙, 컨벤션의 상세 정의:
 
 - **[project-structure.md](./project-structure.md)** — 프로젝트 구조, 규칙, 네이밍 컨벤션
-- **[AGENTS.md](./AGENTS.md)** — 프로젝트 지식 베이스 (아키텍처, 기술 스택, MVP 기능)
+- **[AGENTS.md](./AGENTS.md)** — AI Agent 조직 차터 (5계층 인덱스, 역할 가이드라인, 협업 프로토콜)
 
 ## 현재 상태
 
-**Planning Complete** — 5개 기획 문서 완성, 기술 스파이크 및 MVP 구현 대기 중.
+**MVP Feature 1–4 구현 완료** — Feature 5–10 구현 대기 중.
 
 ## 핵심 규칙 요약
 

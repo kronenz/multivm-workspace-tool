@@ -105,7 +105,8 @@ docs/
 | 문서 | 경로 | 모든 역할이 참조 |
 |------|------|------------------|
 | **Glossary** | [glossary.md](./glossary.md) | 23개 핵심 용어 정의 |
-| **AGENTS.md** | [AGENTS.md](../AGENTS.md) | 프로젝트 전체 지식 베이스 |
+| **AGENTS.md** | [AGENTS.md](../AGENTS.md) | AI Agent 조직 인덱스 (.agents/ 연결) |
+| **.agents/** | [.agents/](../.agents/) | 역할별 가이드라인, 프로토콜, 레지스트리 (26개 파일) |
 | **CLAUDE.md** | [CLAUDE.md](../CLAUDE.md) | AI 에이전트 설정 |
 | **project-structure.md** | [project-structure.md](../project-structure.md) | 프로젝트 구조 및 규칙 |
 
@@ -151,5 +152,5 @@ Market Research (시장 분석) → PRD (요구사항 정의)
 
 ---
 
-**Last Updated**: 2026-02-07
-**Version**: 2.0
+**Last Updated**: 2026-02-08
+**Version**: 2.1
