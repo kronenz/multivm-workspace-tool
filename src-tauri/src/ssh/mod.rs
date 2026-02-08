@@ -1,6 +1,6 @@
 pub mod session;
 
-pub use session::{FileEntry, ReadFileResult, SessionCommand, SessionStatus, SshError, SshSessionConfig, SshSessionHandle};
+pub use session::{FileEntry, ReadFileResult, SshError, SshSessionConfig, SshSessionHandle};
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -16,6 +16,7 @@ impl SshConnectionManager {
         }
     }
 
+    #[allow(dead_code)]
     pub fn connect(
         &self,
         config: SshSessionConfig,
@@ -129,6 +130,7 @@ impl SshConnectionManager {
         handle.read_file(path, max_bytes)
     }
 
+    #[allow(dead_code)]
     pub fn disconnect(&self, session_id: &str) -> Result<(), SshError> {
         let mut sessions = self.sessions.lock().map_err(|_| {
             SshError::Channel("session lock poisoned".to_string())
@@ -147,6 +149,7 @@ impl SshConnectionManager {
         }
     }
 
+    #[allow(dead_code)]
     pub fn active_sessions(&self) -> Vec<(String, String)> {
         let sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
         sessions
