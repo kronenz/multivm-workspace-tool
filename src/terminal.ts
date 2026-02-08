@@ -76,14 +76,13 @@ export function applyTerminalTheme(instance: TerminalInstance, name: ThemeName):
 export function createTerminal(container: HTMLElement): TerminalInstance {
   const fitAddon = new FitAddon();
 
-  const terminal = new Terminal({
-    fontFamily: 'JetBrains Mono, Menlo, Monaco, Consolas, Courier New, monospace',
-    fontSize: 14,
-    cursorBlink: true,
-    scrollback: 10000,
-    allowProposedApi: true,
-    theme: getTerminalTheme('dark'),
-  });
+   const terminal = new Terminal({
+     fontFamily: 'JetBrains Mono, Menlo, Monaco, Consolas, Courier New, monospace',
+     fontSize: 14,
+     cursorBlink: true,
+     scrollback: 10000,
+     theme: getTerminalTheme('dark'),
+   });
 
   terminal.loadAddon(fitAddon);
   terminal.open(container);
@@ -96,9 +95,9 @@ export function createTerminal(container: HTMLElement): TerminalInstance {
       webglAddon.dispose();
     });
     terminal.loadAddon(webglAddon);
-  } catch (e) {
-    console.warn('[Terminal] WebGL not available, using Canvas renderer', e);
-  }
+   } catch (e) {
+     console.warn('[Terminal] WebGL not available, falling back to DOM renderer', e);
+   }
 
   return { terminal, fitAddon, disposables: [] };
 }

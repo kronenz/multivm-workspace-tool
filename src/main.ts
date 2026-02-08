@@ -4,7 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { createLayoutToolbar } from './grid.ts';
 import type { PaneState } from './workspace.ts';
-import { createWorkspace, attachTerminal, destroyWorkspace, getActivePaneIndex, setPaneHostLabel, writeToPaneBuffer, updatePaneStatus } from './workspace.ts';
+import { createWorkspace, attachTerminal, destroyWorkspace, getActivePaneIndex, setPaneHostLabel, setPaneMarkdownPath, writeToPaneBuffer, updatePaneStatus } from './workspace.ts';
 import { FileBrowser, type FileEntry } from './file_browser.ts';
 import { installMarkdownLinkHandler, renderMarkdownToHtml } from './markdown.ts';
 import { applyTerminalTheme, type ThemeName } from './terminal.ts';
@@ -24,6 +24,8 @@ interface ConnectionConfig {
   key_path: string | null;
   project_path: string;
   ai_cli_command: string | null;
+  keepalive_interval_secs?: number | null;
+  reconnect_max_retries?: number | null;
 }
 
 interface GridLayout {
@@ -104,7 +106,11 @@ let mdPathEl: HTMLElement | null = null;
 let mdNoteEl: HTMLElement | null = null;
 let panelInitialized = false;
 
+let panelWidthPx: number | null = null;
+
 let currentTheme: ThemeName = 'dark';
+
+let isClosing = false;
 
 function $(id: string): HTMLElement {
   const el = document.getElementById(id);
@@ -252,7 +258,11 @@ function renderResourceItem(host: string, snap: ResourceSnapshot | undefined): s
 function renderMetric(label: string, value: number | null): string {
   const cls = metricClass(value);
   const text = value === null || Number.isNaN(value) ? 'N/A' : `${Math.round(value)}%`;
-  return `<span class="metric ${cls}"><span class="k">${label}</span><span class="v">${text}</span></span>`;
+  const pct = value !== null && !Number.isNaN(value) ? Math.round(value) : 0;
+  const barHtml = value !== null && !Number.isNaN(value)
+    ? `<span class="metric-bar"><span class="metric-bar-fill ${cls}" style="width:${pct}%"></span></span>`
+    : '';
+  return `<span class="metric ${cls}"><span class="k">${label}</span>${barHtml}<span class="v">${text}</span></span>`;
 }
 
 function metricClass(value: number | null): string {
@@ -273,6 +283,7 @@ function initWorkspacePanel(): void {
   const closeBtn = $("btn-panel-close") as HTMLButtonElement;
   const refreshBtn = $("btn-panel-refresh") as HTMLButtonElement;
   const scrim = $("workspace-panel-scrim");
+  const resizer = $("workspace-panel-resizer");
 
   const filesView = $("file-browser-view");
   const docsView = $("markdown-viewer-view");
@@ -319,6 +330,54 @@ function initWorkspacePanel(): void {
   closeBtn.addEventListener('click', () => setPanelOpen(false));
   scrim.addEventListener('click', () => setPanelOpen(false));
 
+  // Panel resize (desktop only)
+  const saved = localStorage.getItem('panelWidthPx');
+  if (saved) {
+    const v = parseInt(saved, 10);
+    if (Number.isFinite(v)) {
+      panelWidthPx = v;
+      applyPanelWidth();
+    }
+  }
+
+  resizer.addEventListener('pointerdown', (ev) => {
+    if (!panelOpen) return;
+    ev.preventDefault();
+    resizer.setPointerCapture(ev.pointerId);
+
+    const startX = ev.clientX;
+    const rootStyle = getComputedStyle(document.documentElement);
+    const cssVar = parseFloat(rootStyle.getPropertyValue('--panel-width'));
+    const measured = parseFloat(getComputedStyle($("workspace-panel")).width);
+    const current =
+      panelWidthPx ??
+      (Number.isFinite(cssVar) && cssVar > 0
+        ? cssVar
+        : Number.isFinite(measured) && measured > 0
+          ? measured
+          : 380);
+    panelWidthPx = current;
+
+    const min = 260;
+    const max = 720;
+
+    const onMove = (e: PointerEvent) => {
+      const dx = startX - e.clientX;
+      panelWidthPx = Math.max(min, Math.min(max, current + dx));
+      applyPanelWidth();
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      if (panelWidthPx) {
+        localStorage.setItem('panelWidthPx', String(Math.round(panelWidthPx)));
+      }
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  });
+
   refreshBtn.addEventListener('click', () => {
     if (panelMode === 'files') {
       void fileBrowser?.refresh();
@@ -330,6 +389,11 @@ function initWorkspacePanel(): void {
   // Default state
   setPanelMode('files');
   setPanelOpen(false);
+}
+
+function applyPanelWidth(): void {
+  if (!panelWidthPx) return;
+  document.documentElement.style.setProperty('--panel-width', `${Math.round(panelWidthPx)}px`);
 }
 
 function setPanelMode(mode: 'files' | 'docs'): void {
@@ -428,6 +492,16 @@ function openMarkdownForActiveSession(path: string): void {
     showToast('No active session for this pane', 'error');
     return;
   }
+
+  // If the active pane is already in Markdown mode, render there as well.
+  if (activeWorkspace) {
+    const idx = getActivePaneIndex();
+    const pane = activeWorkspace.panes[idx];
+    if (pane) {
+      setPaneMarkdownPath(pane, path);
+    }
+  }
+
   initWorkspacePanel();
   setPanelOpen(true);
   setPanelMode('docs');
@@ -626,6 +700,13 @@ function extractFormData(
     const aiCmd = aiInput?.value.trim() || null;
     const port = parseInt(portInput?.value ?? "22", 10) || 22;
 
+    const keepaliveInput = card.querySelector<HTMLInputElement>('[name="conn-keepalive"]');
+    const maxRetriesInput = card.querySelector<HTMLInputElement>('[name="conn-max-retries"]');
+    const keepaliveVal = keepaliveInput?.value.trim();
+    const maxRetriesVal = maxRetriesInput?.value.trim();
+    const keepalive_interval_secs = keepaliveVal ? parseInt(keepaliveVal, 10) : null;
+    const reconnect_max_retries = maxRetriesVal ? parseInt(maxRetriesVal, 10) : null;
+
     connections.push({
       host,
       port,
@@ -634,6 +715,8 @@ function extractFormData(
       key_path: keyPath,
       project_path: projectPath,
       ai_cli_command: aiCmd,
+      keepalive_interval_secs: Number.isFinite(keepalive_interval_secs) ? keepalive_interval_secs : null,
+      reconnect_max_retries: Number.isFinite(reconnect_max_retries) ? reconnect_max_retries : null,
     });
   });
 
@@ -744,6 +827,8 @@ function renderWorksetDetail(workset: Workset): void {
           ${conn.key_path ? `<span><span class="connection-detail-label">Key:</span> ${escapeHtml(conn.key_path)}</span>` : ""}
           <span><span class="connection-detail-label">Path:</span> ${escapeHtml(conn.project_path)}</span>
           ${conn.ai_cli_command ? `<span><span class="connection-detail-label">AI CLI:</span> ${escapeHtml(conn.ai_cli_command)}</span>` : ""}
+          ${conn.keepalive_interval_secs ? `<span><span class="connection-detail-label">Keepalive:</span> ${conn.keepalive_interval_secs}s</span>` : ""}
+          ${conn.reconnect_max_retries ? `<span><span class="connection-detail-label">Max Retries:</span> ${conn.reconnect_max_retries}</span>` : ""}
         </div>
       </div>`;
   });
@@ -798,6 +883,8 @@ function renderConnectionFormCard(index: number, conn?: ConnectionConfig): strin
   const keyPath = conn?.key_path ?? "";
   const projPath = conn?.project_path ?? "";
   const aiCmd = conn?.ai_cli_command ?? "";
+  const keepalive = conn?.keepalive_interval_secs ?? '';
+  const maxRetries = conn?.reconnect_max_retries ?? '';
   const keyDisplay = auth === "key" ? "" : "display:none;";
 
   return `
@@ -846,6 +933,21 @@ function renderConnectionFormCard(index: number, conn?: ConnectionConfig): strin
           <div class="form-hint">Auto-launched in project directory</div>
         </div>
       </div>
+      <details class="conn-advanced">
+        <summary class="conn-advanced-toggle">Advanced SSH Settings</summary>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Keepalive Interval (sec)</label>
+            <input type="number" name="conn-keepalive" class="form-input" min="0" max="300" placeholder="15" value="${keepalive}" />
+            <div class="form-hint">Seconds between SSH keepalive probes (default: 15)</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Max Reconnect Retries</label>
+            <input type="number" name="conn-max-retries" class="form-input" min="0" max="20" placeholder="3" value="${maxRetries}" />
+            <div class="form-hint">Max auto-reconnect attempts (default: 3)</div>
+          </div>
+        </div>
+      </details>
     </div>`;
 }
 
@@ -1046,7 +1148,7 @@ async function cleanupWorkspace(): Promise<void> {
   clearResourceBar();
 }
 
-async function handleActivateWorkset(worksetId: string): Promise<void> {
+  async function handleActivateWorkset(worksetId: string): Promise<void> {
   try {
     const workset = await invoke<Workset>("get_workset", { id: worksetId });
     if (!workset) {
@@ -1055,13 +1157,51 @@ async function handleActivateWorkset(worksetId: string): Promise<void> {
     }
 
     // Collect passwords for password-auth connections
-    const passwords: (string | null)[] = workset.connections.map((conn) => {
-      if (conn.auth_method === "password") {
-        const pw = window.prompt(`Password for ${conn.user}@${conn.host}:`);
-        return pw;
+    const passwords: (string | null)[] = new Array(workset.connections.length).fill(null);
+    const pendingKeystoreSaves: Array<{
+      index: number;
+      host: string;
+      user: string;
+      password: string;
+    }> = [];
+
+    for (let i = 0; i < workset.connections.length; i++) {
+      const conn = workset.connections[i];
+      if (conn.auth_method !== 'password') continue;
+
+      // Try OS keystore first.
+      try {
+        const saved = await invoke<string | null>('retrieve_ssh_password', {
+          host: conn.host,
+          user: conn.user,
+        });
+        if (saved) {
+          passwords[i] = saved;
+          continue;
+        }
+      } catch (err) {
+        console.warn(`Keystore retrieve failed for ${conn.user}@${conn.host}:`, err);
       }
-      return null;
-    });
+
+      // Fall back to prompt.
+      const pw = window.prompt(`Password for ${conn.user}@${conn.host}:`);
+      passwords[i] = pw;
+
+      if (pw !== null && pw.length > 0) {
+        const shouldSave = window.confirm(
+          `Save password to system keystore for ${conn.user}@${conn.host}?`
+        );
+        if (shouldSave) {
+          pendingKeystoreSaves.push({
+            index: i,
+            host: conn.host,
+            user: conn.user,
+            password: pw,
+          });
+          showToast('Password will be saved to system keystore', 'success');
+        }
+      }
+    }
 
     // If any required password was cancelled, abort
     if (workset.connections.some((c, i) => c.auth_method === "password" && passwords[i] === null)) {
@@ -1123,6 +1263,33 @@ async function handleActivateWorkset(worksetId: string): Promise<void> {
     });
 
     wsState.sessionInfos = sessions;
+
+    // Persist prompted passwords (opt-in) only after successful session creation.
+    if (pendingKeystoreSaves.length > 0) {
+      const ok = new Set(
+        sessions.filter((s) => !!s.session_id).map((s) => s.connection_index)
+      );
+      let storedCount = 0;
+      for (const item of pendingKeystoreSaves) {
+        if (!ok.has(item.index)) continue;
+        try {
+          await invoke('store_ssh_password', {
+            host: item.host,
+            user: item.user,
+            password: item.password,
+          });
+          storedCount++;
+        } catch (err) {
+          showToast(
+            `Failed to save password for ${item.user}@${item.host}: ${String(err)}`,
+            'error'
+          );
+        }
+      }
+      if (storedCount > 0) {
+        showToast('Password saved to system keystore', 'success');
+      }
+    }
 
     // Map session IDs to panes and wire event listeners
     for (const session of sessions) {
@@ -1186,6 +1353,15 @@ async function handleActivateWorkset(worksetId: string): Promise<void> {
       );
       eventUnlisteners.push(unlisten3);
 
+      // AI CLI exit → notify user
+      const unlisten4 = await listen<void>(
+        `ai-cli-exited-${session.session_id}`,
+        () => {
+          showToast('AI CLI process exited', 'error');
+        }
+      );
+      eventUnlisteners.push(unlisten4);
+
       // Terminal input → send to SSH via IPC
       if (pane.terminal) {
         const inputDisposable = pane.terminal.terminal.onData((data: string) => {
@@ -1206,6 +1382,17 @@ async function handleActivateWorkset(worksetId: string): Promise<void> {
           }
         );
         pane.terminal.disposables.push(resizeDisposable);
+
+        // AI CLI restart button
+        const restartBtn = pane.statusEl?.querySelector<HTMLButtonElement>('.btn-pane-restart-cli');
+        if (restartBtn) {
+          restartBtn.style.display = '';
+          restartBtn.addEventListener('click', () => {
+            invoke('restart_ai_cli', { sessionId: session.session_id })
+              .then(() => showToast('AI CLI restarted', 'success'))
+              .catch((err) => showToast(`Restart failed: ${String(err)}`, 'error'));
+          });
+        }
       }
     }
 
@@ -1254,9 +1441,26 @@ window.addEventListener("DOMContentLoaded", () => {
   wireSearch();
   void initTheme();
 
-  getCurrentWindow().onCloseRequested(async () => {
-    if (activeWorkspace) {
-      await cleanupWorkspace();
+  getCurrentWindow().onCloseRequested(async (event) => {
+    // Tauri may wait for this handler; never block window close indefinitely.
+    if (isClosing) return;
+    isClosing = true;
+    try {
+      event?.preventDefault?.();
+    } catch {
+      // ignore
+    }
+
+    const cleanup = activeWorkspace ? cleanupWorkspace() : Promise.resolve();
+    await Promise.race([
+      cleanup,
+      new Promise<void>((resolve) => setTimeout(resolve, 1500)),
+    ]);
+
+    try {
+      await getCurrentWindow().close();
+    } catch {
+      // ignore
     }
   });
 

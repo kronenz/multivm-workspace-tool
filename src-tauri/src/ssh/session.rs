@@ -36,6 +36,7 @@ pub struct ResourceSnapshot {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum SshError {
     TcpConnect(String),
     Handshake(String),
@@ -67,6 +68,9 @@ pub enum SessionCommand {
     Write(Vec<u8>),
     Resize { cols: u32, rows: u32 },
     ReconnectNow,
+    RestartAiCli {
+        reply_tx: mpsc::Sender<Result<(), String>>,
+    },
     ListDirectory {
         path: String,
         reply_tx: mpsc::Sender<Result<Vec<FileEntry>, String>>,
@@ -100,10 +104,13 @@ pub struct SshSessionConfig {
     pub password: Option<String>,
     pub project_path: String,
     pub ai_cli_command: Option<String>,
+    pub keepalive_interval_secs: Option<u32>,
+    pub reconnect_max_retries: Option<u32>,
 }
 
 pub struct SshSessionHandle {
     pub id: String,
+    #[allow(dead_code)]
     pub host_display: String,
     cmd_tx: mpsc::Sender<SessionCommand>,
     worker: Option<JoinHandle<()>>,
@@ -167,6 +174,18 @@ impl SshSessionHandle {
             .map_err(SshError::Channel)
     }
 
+    pub fn restart_ai_cli(&self) -> Result<(), SshError> {
+        let (reply_tx, reply_rx) = mpsc::channel::<Result<(), String>>();
+        self.cmd_tx
+            .send(SessionCommand::RestartAiCli { reply_tx })
+            .map_err(|e| SshError::Send(e.to_string()))?;
+
+        reply_rx
+            .recv_timeout(Duration::from_secs(5))
+            .map_err(|e| SshError::Channel(format!("restart_ai_cli response timeout: {e}")))?
+            .map_err(SshError::Channel)
+    }
+
     pub fn read_file(&self, path: String, max_bytes: Option<u64>) -> Result<ReadFileResult, SshError> {
         let (reply_tx, reply_rx) = mpsc::channel::<Result<ReadFileResult, String>>();
         self.cmd_tx
@@ -196,10 +215,40 @@ fn stat_is_dir(perm: Option<u32>) -> bool {
 }
 
 fn sftp_list_directory(sess: &Session, path: &str) -> Result<Vec<FileEntry>, String> {
-    let sftp = sess.sftp().map_err(|e| format!("sftp init: {e}"))?;
-    let entries = sftp
-        .readdir(Path::new(path))
-        .map_err(|e| format!("sftp readdir {path}: {e}"))?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let sftp = loop {
+        match sess.sftp() {
+            Ok(s) => break s,
+            Err(e) => {
+                let io_err: std::io::Error = e.into();
+                if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                    if Instant::now() >= deadline {
+                        return Err("sftp init timed out".to_string());
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                return Err(format!("sftp init: {io_err}"));
+            }
+        }
+    };
+
+    let entries = loop {
+        match sftp.readdir(Path::new(path)) {
+            Ok(v) => break v,
+            Err(e) => {
+                let io_err: std::io::Error = e.into();
+                if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                    if Instant::now() >= deadline {
+                        return Err(format!("sftp readdir {path}: timed out"));
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                return Err(format!("sftp readdir {path}: {io_err}"));
+            }
+        }
+    };
 
     let mut out = Vec::new();
     for (p, stat) in entries {
@@ -229,19 +278,59 @@ fn sftp_read_file(sess: &Session, path: &str, max_bytes: Option<u64>) -> Result<
     const DEFAULT_MAX_BYTES: u64 = 1024 * 1024; // 1 MiB
     let limit = max_bytes.unwrap_or(DEFAULT_MAX_BYTES);
 
-    let sftp = sess.sftp().map_err(|e| format!("sftp init: {e}"))?;
-    let mut file = sftp
-        .open(Path::new(path))
-        .map_err(|e| format!("sftp open {path}: {e}"))?;
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let sftp = loop {
+        match sess.sftp() {
+            Ok(s) => break s,
+            Err(e) => {
+                let io_err: std::io::Error = e.into();
+                if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                    if Instant::now() >= deadline {
+                        return Err("sftp init timed out".to_string());
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                return Err(format!("sftp init: {io_err}"));
+            }
+        }
+    };
+
+    let mut file = loop {
+        match sftp.open(Path::new(path)) {
+            Ok(f) => break f,
+            Err(e) => {
+                let io_err: std::io::Error = e.into();
+                if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                    if Instant::now() >= deadline {
+                        return Err(format!("sftp open {path}: timed out"));
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                return Err(format!("sftp open {path}: {io_err}"));
+            }
+        }
+    };
 
     let mut out: Vec<u8> = Vec::new();
     let mut buf = [0u8; 8192];
     while (out.len() as u64) < limit {
         let remaining = (limit - out.len() as u64) as usize;
         let to_read = std::cmp::min(buf.len(), remaining);
-        let n = file
-            .read(&mut buf[..to_read])
-            .map_err(|e| format!("sftp read {path}: {e}"))?;
+        let n = loop {
+            match file.read(&mut buf[..to_read]) {
+                Ok(n) => break n,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return Err(format!("sftp read {path}: timed out"));
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                Err(e) => return Err(format!("sftp read {path}: {e}")),
+            }
+        };
         if n == 0 {
             break;
         }
@@ -257,7 +346,14 @@ fn sftp_read_file(sess: &Session, path: &str, max_bytes: Option<u64>) -> Result<
         match file.read(&mut one) {
             Ok(0) => false,
             Ok(_) => true,
-            Err(e) => return Err(format!("sftp read {path}: {e}")),
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::WouldBlock {
+                    // Can't determine reliably; treat as truncated to be safe.
+                    true
+                } else {
+                    return Err(format!("sftp read {path}: {e}"));
+                }
+            }
         }
     };
 
@@ -269,22 +365,78 @@ fn sftp_read_file(sess: &Session, path: &str, max_bytes: Option<u64>) -> Result<
 }
 
 fn exec_read_to_string(sess: &Session, cmd: &str) -> Result<String, String> {
-    let mut channel = sess
-        .channel_session()
-        .map_err(|e| format!("channel_session: {e}"))?;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut channel = loop {
+        match sess.channel_session() {
+            Ok(c) => break c,
+            Err(e) => {
+                let io_err: std::io::Error = e.into();
+                if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                    if Instant::now() >= deadline {
+                        return Err("channel_session timed out".to_string());
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                return Err(format!("channel_session: {io_err}"));
+            }
+        }
+    };
 
-    channel.exec(cmd).map_err(|e| format!("exec {cmd}: {e}"))?;
+    loop {
+        match channel.exec(cmd) {
+            Ok(()) => break,
+            Err(e) => {
+                let io_err: std::io::Error = e.into();
+                if io_err.kind() == std::io::ErrorKind::WouldBlock {
+                    if Instant::now() >= deadline {
+                        return Err(format!("exec {cmd}: timed out"));
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                return Err(format!("exec {cmd}: {io_err}"));
+            }
+        }
+    }
 
-    let mut out = String::new();
-    channel
-        .read_to_string(&mut out)
-        .map_err(|e| format!("read stdout: {e}"))?;
+    let mut out_bytes: Vec<u8> = Vec::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        match channel.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => out_bytes.extend_from_slice(&buf[..n]),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(e) => return Err(format!("read stdout: {e}")),
+        }
+    }
 
-    let mut err_out = String::new();
-    let _ = channel.stderr().read_to_string(&mut err_out);
+    let mut err_bytes: Vec<u8> = Vec::new();
+    let mut err_buf = [0u8; 8192];
+    loop {
+        match channel.stderr().read(&mut err_buf) {
+            Ok(0) => break,
+            Ok(n) => err_bytes.extend_from_slice(&err_buf[..n]),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(_) => break,
+        }
+    }
 
     let _ = channel.close();
     let _ = channel.wait_close();
+
+    let mut out = String::from_utf8_lossy(&out_bytes).to_string();
+    let err_out = String::from_utf8_lossy(&err_bytes).to_string();
 
     if !err_out.trim().is_empty() {
         if !out.ends_with('\n') {
@@ -334,6 +486,21 @@ fn parse_cpu_percent_from_top(output: &str) -> Option<f64> {
     }
 }
 
+fn parse_cpu_percent_from_top_darwin(output: &str) -> Option<f64> {
+    // macOS top output: "CPU usage: X% user, Y% sys, Z% idle"
+    let line = output.lines().find(|l| l.contains("CPU usage:"))?;
+    for part in line.split(',') {
+        let trimmed = part.trim();
+        if trimmed.ends_with("idle") {
+            let num_str = trimmed.split('%').next()?.trim();
+            let num = num_str.split_whitespace().last()?;
+            let idle = num.parse::<f64>().ok()?;
+            return Some((100.0 - idle).max(0.0).min(100.0));
+        }
+    }
+    None
+}
+
 fn parse_ram_percent_from_free(output: &str) -> Option<f64> {
     let line = output.lines().find(|l| l.trim_start().starts_with("Mem:"))?;
     let fields: Vec<&str> = line.split_whitespace().collect();
@@ -351,6 +518,44 @@ fn parse_ram_percent_from_free(output: &str) -> Option<f64> {
     Some(((used / total) * 100.0).max(0.0).min(100.0))
 }
 
+fn parse_ram_from_vm_stat(vm_stat_output: &str, sysctl_output: &str) -> Option<f64> {
+    // vm_stat header: "Mach Virtual Memory Statistics: (page size of 16384 bytes)"
+    let first_line = vm_stat_output.lines().next()?;
+    let page_size: u64 = first_line
+        .split("page size of ")
+        .nth(1)?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()?;
+
+    let get_pages = |label: &str| -> Option<u64> {
+        let line = vm_stat_output
+            .lines()
+            .find(|l| l.trim_start().starts_with(label))?;
+        let rhs = line.split(':').nth(1)?.trim();
+        rhs.trim_end_matches('.').parse::<u64>().ok()
+    };
+
+    let free = get_pages("Pages free")?;
+    let inactive = get_pages("Pages inactive").unwrap_or(0);
+    let speculative = get_pages("Pages speculative").unwrap_or(0);
+
+    let total_bytes: u64 = sysctl_output.trim().parse().ok()?;
+    if page_size == 0 {
+        return None;
+    }
+    let total_pages = total_bytes / page_size;
+    if total_pages == 0 {
+        return None;
+    }
+
+    let free_pages = free + inactive + speculative;
+    let used_pages = total_pages.saturating_sub(free_pages);
+    let pct = (used_pages as f64 / total_pages as f64) * 100.0;
+    Some(pct.max(0.0).min(100.0))
+}
+
 fn parse_disk_percent_from_df(output: &str) -> Option<f64> {
     let line = output.lines().skip(1).find(|l| !l.trim().is_empty())?;
     let fields: Vec<&str> = line.split_whitespace().collect();
@@ -366,9 +571,41 @@ fn now_epoch() -> u64 {
         .as_secs()
 }
 
-fn collect_resource_snapshot(sess: &Session, project_path: &str) -> ResourceSnapshot {
-    let cpu_output = exec_read_to_string(sess, "LANG=C top -bn1");
-    let free_output = exec_read_to_string(sess, "LANG=C free -m");
+fn detect_remote_os(sess: &Session) -> &'static str {
+    match exec_read_to_string(sess, "uname -s") {
+        Ok(output) => {
+            if output.trim().eq_ignore_ascii_case("darwin") {
+                "darwin"
+            } else {
+                "linux"
+            }
+        }
+        Err(_) => "linux",
+    }
+}
+
+fn collect_resource_snapshot(sess: &Session, project_path: &str, remote_os: &str) -> ResourceSnapshot {
+    let (cpu_percent, ram_percent) = if remote_os == "darwin" {
+        let cpu_output = exec_read_to_string(sess, "LANG=C top -l 1 -s 0");
+        let cpu = cpu_output
+            .ok()
+            .and_then(|o| parse_cpu_percent_from_top_darwin(&o));
+
+        let vm_stat_output = exec_read_to_string(sess, "vm_stat");
+        let sysctl_output = exec_read_to_string(sess, "sysctl -n hw.memsize");
+        let ram = match (vm_stat_output.ok(), sysctl_output.ok()) {
+            (Some(vs), Some(sc)) => parse_ram_from_vm_stat(&vs, &sc),
+            _ => None,
+        };
+
+        (cpu, ram)
+    } else {
+        let cpu_output = exec_read_to_string(sess, "LANG=C top -bn1");
+        let free_output = exec_read_to_string(sess, "LANG=C free -m");
+        let cpu = cpu_output.ok().and_then(|o| parse_cpu_percent_from_top(&o));
+        let ram = free_output.ok().and_then(|o| parse_ram_percent_from_free(&o));
+        (cpu, ram)
+    };
 
     let preferred_path = if project_path.trim().is_empty() {
         "/"
@@ -384,8 +621,6 @@ fn collect_resource_snapshot(sess: &Session, project_path: &str) -> ResourceSnap
         df_output = exec_read_to_string(sess, "LANG=C df -P /");
     }
 
-    let cpu_percent = cpu_output.ok().and_then(|o| parse_cpu_percent_from_top(&o));
-    let ram_percent = free_output.ok().and_then(|o| parse_ram_percent_from_free(&o));
     let disk_percent = df_output.ok().and_then(|o| parse_disk_percent_from_df(&o));
 
     ResourceSnapshot {
@@ -412,17 +647,49 @@ fn shell_escape(value: &str) -> String {
     out
 }
 
+fn channel_write_all_nonblocking(
+    channel: &mut Channel,
+    data: &[u8],
+    timeout: Duration,
+) -> Result<(), std::io::Error> {
+    let deadline = Instant::now() + timeout;
+    let mut offset: usize = 0;
+    while offset < data.len() {
+        match channel.write(&data[offset..]) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "channel write returned 0",
+                ));
+            }
+            Ok(n) => offset += n,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "channel write timed out",
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
 fn session_worker(
     config: SshSessionConfig,
     app_handle: tauri::AppHandle,
     cmd_rx: mpsc::Receiver<SessionCommand>,
 ) {
-    const MAX_RETRIES: u32 = 3;
-    const RETRY_SCHEDULE_SECS: [u64; 3] = [0, 5, 10];
+    let max_retries = config.reconnect_max_retries.unwrap_or(3);
+    let retry_schedule: &[u64] = &[0, 5, 10, 15, 30];
 
     let status_event = format!("session-status-{}", config.id);
     let output_event = format!("terminal-output-{}", config.id);
     let resource_event = format!("resource-update-{}", config.id);
+    let ai_cli_exit_event = format!("ai-cli-exited-{}", config.id);
 
     let emit_status = |status: SessionStatus| {
         let _ = app_handle.emit(&status_event, status);
@@ -501,7 +768,8 @@ fn session_worker(
             return Err(format!("not authenticated on {addr_str}"));
         }
 
-        sess.set_keepalive(true, 15);
+        let interval = config.keepalive_interval_secs.unwrap_or(15);
+        sess.set_keepalive(true, interval);
 
         // PTY + shell
         let mut channel: Channel = sess
@@ -519,7 +787,7 @@ fn session_worker(
                 .map_err(|e| format!("write cd command: {e}"))?;
         }
 
-        // Only auto-run AI CLI on first activation.
+        // Auto-run AI CLI when configured.
         if run_ai_cli {
             if let Some(cmd) = config.ai_cli_command.as_deref() {
                 if !cmd.is_empty() {
@@ -541,7 +809,7 @@ fn session_worker(
         } else if next_attempt_num > 0 {
             emit_status(SessionStatus::Reconnecting {
                 attempt: next_attempt_num,
-                max: MAX_RETRIES,
+                max: max_retries,
             });
         }
 
@@ -562,6 +830,9 @@ fn session_worker(
                     pty_cols = cols;
                     pty_rows = rows;
                 }
+                Ok(SessionCommand::RestartAiCli { reply_tx }) => {
+                    let _ = reply_tx.send(Err("not connected".to_string()));
+                }
                 Ok(SessionCommand::ListDirectory { reply_tx, .. }) => {
                     let _ = reply_tx.send(Err("not connected".to_string()));
                 }
@@ -580,7 +851,11 @@ fn session_worker(
         }
 
         // Attempt connection.
-        let run_ai_cli = initial_connect;
+        let run_ai_cli = config
+            .ai_cli_command
+            .as_deref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
         let connect_result = connect_shell(run_ai_cli, pty_cols, pty_rows);
 
         let (sess, mut channel) = match connect_result {
@@ -608,6 +883,9 @@ fn session_worker(
                                 pty_cols = cols;
                                 pty_rows = rows;
                             }
+                            Ok(SessionCommand::RestartAiCli { reply_tx }) => {
+                                let _ = reply_tx.send(Err("not connected".to_string()));
+                            }
                             Ok(SessionCommand::ListDirectory { reply_tx, .. }) => {
                                 let _ = reply_tx.send(Err("not connected".to_string()));
                             }
@@ -623,7 +901,7 @@ fn session_worker(
                 }
 
                 // Transient failures: keep retrying within budget.
-                if next_attempt_num >= MAX_RETRIES {
+                if next_attempt_num >= max_retries {
                     emit_status(SessionStatus::ReconnectFailed);
                     // Manual wait
                     loop {
@@ -641,6 +919,9 @@ fn session_worker(
                                 pty_cols = cols;
                                 pty_rows = rows;
                             }
+                            Ok(SessionCommand::RestartAiCli { reply_tx }) => {
+                                let _ = reply_tx.send(Err("not connected".to_string()));
+                            }
                             Ok(SessionCommand::ListDirectory { reply_tx, .. }) => {
                                 let _ = reply_tx.send(Err("not connected".to_string()));
                             }
@@ -656,9 +937,9 @@ fn session_worker(
                 }
 
                 // Schedule next attempt.
-                let next = (next_attempt_num + 1).min(MAX_RETRIES);
+                let next = (next_attempt_num + 1).min(max_retries);
                 let schedule_idx = (next.saturating_sub(1)) as usize;
-                let delay = RETRY_SCHEDULE_SECS.get(schedule_idx).copied().unwrap_or(10);
+                let delay = retry_schedule.get(schedule_idx).copied().unwrap_or(10);
                 next_attempt_num = next;
                 next_attempt_at = disconnect_started
                     + Duration::from_secs(delay)
@@ -671,6 +952,9 @@ fn session_worker(
         emit_status(SessionStatus::Connected);
         initial_connect = false;
 
+        // Detect remote OS once per connection (before switching to non-blocking).
+        let remote_os = detect_remote_os(&sess);
+
         sess.set_blocking(false);
         let mut last_resource_emit = Instant::now()
             .checked_sub(Duration::from_secs(5))
@@ -680,12 +964,10 @@ fn session_worker(
         loop {
             match cmd_rx.try_recv() {
                 Ok(SessionCommand::Write(data)) => {
-                    sess.set_blocking(true);
-                    if let Err(e) = channel.write_all(&data) {
+                    if let Err(e) = channel_write_all_nonblocking(&mut channel, &data, Duration::from_secs(5)) {
                         emit_status(SessionStatus::Error(format!("channel write: {e}")));
                         break;
                     }
-                    sess.set_blocking(false);
                 }
                 Ok(SessionCommand::Resize { cols, rows }) => {
                     pty_cols = cols;
@@ -695,10 +977,26 @@ fn session_worker(
                 Ok(SessionCommand::ReconnectNow) => {
                     // Ignore while connected.
                 }
+                Ok(SessionCommand::RestartAiCli { reply_tx }) => {
+                    let cmd = match config.ai_cli_command.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                        Some(v) => v,
+                        None => {
+                            let _ = reply_tx.send(Err("no AI CLI command configured".to_string()));
+                            continue;
+                        }
+                    };
+
+                    let write_bytes = format!("{}\n", cmd).into_bytes();
+                    let result = channel_write_all_nonblocking(
+                        &mut channel,
+                        &write_bytes,
+                        Duration::from_secs(5),
+                    )
+                    .map_err(|e| format!("write ai cli command: {e}"));
+                    let _ = reply_tx.send(result);
+                }
                 Ok(SessionCommand::ListDirectory { path, reply_tx }) => {
-                    sess.set_blocking(true);
                     let result = sftp_list_directory(&sess, &path);
-                    sess.set_blocking(false);
                     let _ = reply_tx.send(result);
                 }
                 Ok(SessionCommand::ReadFile {
@@ -706,9 +1004,7 @@ fn session_worker(
                     max_bytes,
                     reply_tx,
                 }) => {
-                    sess.set_blocking(true);
                     let result = sftp_read_file(&sess, &path, max_bytes);
-                    sess.set_blocking(false);
                     let _ = reply_tx.send(result);
                 }
                 Ok(SessionCommand::Shutdown) => {
@@ -729,6 +1025,7 @@ fn session_worker(
             let mut buf = [0u8; 4096];
             match channel.read(&mut buf) {
                 Ok(0) => {
+                    let _ = app_handle.emit(&ai_cli_exit_event, ());
                     break;
                 }
                 Ok(n) => {
@@ -742,9 +1039,7 @@ fn session_worker(
             }
 
             if last_resource_emit.elapsed() >= Duration::from_secs(5) {
-                sess.set_blocking(true);
-                let snapshot = collect_resource_snapshot(&sess, &config.project_path);
-                sess.set_blocking(false);
+                let snapshot = collect_resource_snapshot(&sess, &config.project_path, remote_os);
                 let _ = app_handle.emit(&resource_event, snapshot);
                 last_resource_emit = Instant::now();
             }
@@ -759,7 +1054,7 @@ fn session_worker(
         disconnect_started = Instant::now();
         next_attempt_num = 1;
         next_attempt_at = disconnect_started
-            + Duration::from_secs(RETRY_SCHEDULE_SECS[0])
+            + Duration::from_secs(retry_schedule.get(0).copied().unwrap_or(0))
             + Duration::from_millis(jitter_ms);
         continue 'outer;
     }

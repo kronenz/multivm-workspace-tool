@@ -36,6 +36,10 @@ pub struct ConnectionConfig {
     pub key_path: Option<String>,
     pub project_path: String,
     pub ai_cli_command: Option<String>,
+    #[serde(default)]
+    pub keepalive_interval_secs: Option<u32>,
+    #[serde(default)]
+    pub reconnect_max_retries: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

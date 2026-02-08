@@ -43,13 +43,13 @@ Create, Read, Update, Delete (CRUD) operations for Workset profiles. Each Workse
 Worksets are persisted as JSON files in `~/.config/multivm-workspace/worksets/`.
 
 **Done Criteria**:
-- [ ] User can create a new Workset via UI form (all fields: SSH host, port, user, auth method, project path, AI CLI command, grid layout)
-- [ ] User can save Workset to disk (JSON file created in config directory)
-- [ ] User can view list of saved Worksets in sidebar (with search/filter by name)
-- [ ] User can edit existing Workset (modify any field, save changes)
-- [ ] User can delete Workset (with confirmation dialog)
-- [ ] User can activate Workset (triggers SSH connection, AI CLI launch, grid layout restoration)
-- [ ] App restart preserves all saved Worksets (JSON files persist across sessions)
+- [x] User can create a new Workset via UI form (all fields: SSH host, port, user, auth method, project path, AI CLI command, grid layout)
+- [x] User can save Workset to disk (JSON file created in config directory)
+- [x] User can view list of saved Worksets in sidebar (with search/filter by name)
+- [x] User can edit existing Workset (modify any field, save changes)
+- [x] User can delete Workset (with confirmation dialog)
+- [x] User can activate Workset (triggers SSH connection, AI CLI launch, grid layout restoration)
+- [x] App restart preserves all saved Worksets (JSON files persist across sessions)
 
 **PRD Mapping**: MUST-1
 
@@ -68,12 +68,12 @@ Establish SSH connections to remote VMs with three authentication methods:
 Connection pooling: Maintain persistent SSH sessions for each VM. Multiple components (Terminal, File Browser, Resource Poller) share the same SSH connection via channel multiplexing.
 
 **Done Criteria**:
-- [ ] User can connect to VM using SSH key file path (authentication succeeds, terminal prompt appears)
-- [ ] User can connect to VM using password (password stored in OS keystore: macOS Keychain, Linux Secret Service, Windows Credential Manager)
-- [ ] User can connect to VM using `~/.ssh/config` alias (app parses config file, extracts host/port/user/identity file, connects successfully)
-- [ ] SSH connection survives for 30+ minutes without manual keepalive (ServerAliveInterval configured)
-- [ ] Connection failure shows clear error message (e.g., "Authentication failed", "Host unreachable", "Timeout")
-- [ ] User can disconnect from VM (SSH session closed cleanly)
+- [x] User can connect to VM using SSH key file path (authentication succeeds, terminal prompt appears)
+- [x] User can connect to VM using password (password stored in OS keystore: macOS Keychain, Linux Secret Service, Windows Credential Manager)
+- [x] User can connect to VM using `~/.ssh/config` alias (app parses config file, extracts host/port/user/identity file, connects successfully)
+- [x] SSH connection survives for 30+ minutes without manual keepalive (ServerAliveInterval configured)
+- [x] Connection failure shows clear error message (e.g., "Authentication failed", "Host unreachable", "Timeout")
+- [x] User can disconnect from VM (SSH session closed cleanly)
 
 **PRD Mapping**: MUST-2
 
@@ -94,13 +94,13 @@ Interactive terminal interface for each remote VM, rendered using xterm.js with 
 Terminal I/O flows: User input → Frontend → IPC → Rust Core → SSH PTY → Remote VM → SSH PTY → Rust Core → IPC → Frontend → xterm.js rendering.
 
 **Done Criteria**:
-- [ ] User can type commands in terminal, see output in real-time (e.g., `ls -la`, `echo "test"`)
-- [ ] User can run interactive TUI apps (vim, htop, nano) with full keyboard navigation
-- [ ] User can run AI CLI tools (claude-code, opencode) and see colored output
-- [ ] User can copy text from terminal (Ctrl+Shift+C), paste into terminal (Ctrl+Shift+V)
-- [ ] User can scroll through 10,000+ lines of output without UI freeze (e.g., `cat large-log.txt`)
-- [ ] Terminal displays 256-color and truecolor correctly (test with `curl -s https://gist.githubusercontent.com/lilyball/8b1b3e3e0c1e4c9e5e5e5e5e5e5e5e5e/raw/256-colors.sh | bash`)
-- [ ] Terminal resizes when pane is resized (columns/rows adjust automatically)
+- [x] User can type commands in terminal, see output in real-time (e.g., `ls -la`, `echo "test"`)
+- [x] User can run interactive TUI apps (vim, htop, nano) with full keyboard navigation
+- [x] User can run AI CLI tools (claude-code, opencode) and see colored output
+- [x] User can copy text from terminal (Ctrl+Shift+C), paste into terminal (Ctrl+Shift+V)
+- [x] User can scroll through 10,000+ lines of output without UI freeze (e.g., `cat large-log.txt`)
+- [x] Terminal displays 256-color and truecolor correctly (test with `curl -s https://gist.githubusercontent.com/lilyball/8b1b3e3e0c1e4c9e5e5e5e5e5e5e5e5e/raw/256-colors.sh | bash`)
+- [x] Terminal resizes when pane is resized (columns/rows adjust automatically)
 
 **PRD Mapping**: MUST-3
 
@@ -120,13 +120,13 @@ Visual layout engine that arranges UI components (Terminal, File Browser, Markdo
 Layout state is saved in Workset profile and restored on activation.
 
 **Done Criteria**:
-- [ ] User can select preset layout (1x1, 2x1, 2x2) from UI menu
-- [ ] User can create custom NxM layout (e.g., 2x3) via layout editor
-- [ ] User can drag pane dividers to resize panes (smooth animation, <50ms response)
-- [ ] User can assign content type to each pane (Terminal, File Browser, Markdown Viewer) via dropdown or context menu
-- [ ] User can assign different VM connections to different panes (e.g., Pane 1 = VM A terminal, Pane 2 = VM B terminal)
-- [ ] Layout state persists in Workset (saved to JSON, restored on activation)
-- [ ] Pane focus indicator (active pane has colored border, inactive panes have gray border)
+- [x] User can select preset layout (1x1, 2x1, 2x2) from UI menu
+- [x] User can create custom NxM layout (e.g., 2x3) via layout editor
+- [x] User can drag pane dividers to resize panes (smooth animation, <50ms response)
+- [x] User can assign content type to each pane (Terminal, File Browser, Markdown Viewer) via dropdown or context menu
+- [x] User can assign different VM connections to different panes (e.g., Pane 1 = VM A terminal, Pane 2 = VM B terminal)
+- [x] Layout state persists in Workset (saved to JSON, restored on activation)
+- [x] Pane focus indicator (active pane has colored border, inactive panes have gray border)
 
 **PRD Mapping**: MUST-4
 
@@ -146,13 +146,13 @@ Read-only tree view of remote file system, accessed via SFTP or SSH exec command
 File Browser UI is rendered in Web Frontend, file system access is handled by Rust Core via SSH.
 
 **Done Criteria**:
-- [ ] User can browse remote file system starting from project folder (tree view with folders and files)
-- [ ] User can expand folder to see contents (click folder → children appear)
-- [ ] User can collapse folder (click expanded folder → children hide)
-- [ ] User can see file metadata (size in KB/MB, last modified date/time)
-- [ ] User can click `.md` file → file opens in Markdown Viewer pane
-- [ ] User can click non-`.md` file → message "Read-only file browser. Use terminal to edit files."
-- [ ] File browser updates when remote file system changes (manual refresh button or auto-refresh every 10 seconds)
+- [x] User can browse remote file system starting from project folder (tree view with folders and files)
+- [x] User can expand folder to see contents (click folder → children appear)
+- [x] User can collapse folder (click expanded folder → children hide)
+- [x] User can see file metadata (size in KB/MB, last modified date/time)
+- [x] User can click `.md` file → file opens in Markdown Viewer pane
+- [x] User can click non-`.md` file → message "Read-only file browser. Use terminal to edit files."
+- [x] File browser updates when remote file system changes (manual refresh button or auto-refresh every 10 seconds)
 
 **PRD Mapping**: MUST-5
 
@@ -172,12 +172,12 @@ Render Markdown files from remote VMs in a formatted, readable view. Features:
 Markdown Viewer UI is rendered in Web Frontend, file content is fetched by Rust Core via SSH.
 
 **Done Criteria**:
-- [ ] User can open `.md` file from File Browser → file renders in Markdown Viewer pane
-- [ ] Markdown rendering supports: Headers (H1-H6), bold, italic, lists (ordered/unordered), tables, links, inline code, code blocks
-- [ ] Code blocks have syntax highlighting (detect language from fence: ```python, ```javascript, etc.)
-- [ ] User can click links in Markdown (external URLs open in browser, same-document `#anchor` links scroll inside viewer, all other internal links show "not supported" message)
-- [ ] Markdown Viewer auto-refreshes when file changes on remote VM (5-second polling interval)
-- [ ] User can manually refresh Markdown Viewer (refresh button)
+- [x] User can open `.md` file from File Browser → file renders in Markdown Viewer pane
+- [x] Markdown rendering supports: Headers (H1-H6), bold, italic, lists (ordered/unordered), tables, links, inline code, code blocks
+- [x] Code blocks have syntax highlighting (detect language from fence: ```python, ```javascript, etc.)
+- [x] User can click links in Markdown (external URLs open in browser, same-document `#anchor` links scroll inside viewer, all other internal links show "not supported" message)
+- [x] Markdown Viewer auto-refreshes when file changes on remote VM (5-second polling interval)
+- [x] User can manually refresh Markdown Viewer (refresh button)
 
 **PRD Mapping**: MUST-6
 
@@ -198,13 +198,13 @@ Display snapshot values of remote VM system resources (CPU %, RAM %, Disk %) wit
 Resource Poller runs in Rust Core, sends updates to Frontend via IPC Events.
 
 **Done Criteria**:
-- [ ] User sees CPU usage % for each connected VM (updated every 5 seconds)
-- [ ] User sees RAM usage % for each connected VM (updated every 5 seconds)
-- [ ] User sees Disk usage % for each connected VM (updated every 5 seconds)
-- [ ] Resource values have color coding (green <50%, yellow 50-80%, red >80%)
-- [ ] Resource monitoring works on Ubuntu 22.04, Debian 11, CentOS 8 (Linux variants)
-- [ ] Resource monitoring gracefully fails on unsupported OS (shows "N/A" instead of crashing)
-- [ ] User can see resource values in global status bar (bottom, fixed) while connected to one or more VMs
+- [x] User sees CPU usage % for each connected VM (updated every 5 seconds)
+- [x] User sees RAM usage % for each connected VM (updated every 5 seconds)
+- [x] User sees Disk usage % for each connected VM (updated every 5 seconds)
+- [x] Resource values have color coding (green <50%, yellow 50-80%, red >80%)
+- [x] Resource monitoring works on Ubuntu 22.04, Debian 11, CentOS 8 (Linux variants)
+- [x] Resource monitoring gracefully fails on unsupported OS (shows "N/A" instead of crashing)
+- [x] User can see resource values in global status bar (bottom, fixed) while connected to one or more VMs
 
 **PRD Mapping**: MUST-7
 
@@ -227,12 +227,12 @@ Automatically execute AI CLI commands when Workset is activated. Workflow:
 AI CLI command is stored in Workset profile. User can edit command in Workset settings.
 
 **Done Criteria**:
-- [ ] User can specify AI CLI command in Workset creation form (text input field)
-- [ ] User activates Workset → terminal automatically runs `cd <project_folder> && <ai_cli_command>`
-- [ ] User sees AI CLI output in terminal (e.g., Claude Code welcome message, prompt)
-- [ ] User can interact with AI CLI immediately (no manual command typing required)
-- [ ] User can edit AI CLI command in Workset settings (change command, save, re-activate Workset)
-- [ ] If AI CLI command fails (e.g., command not found), terminal shows error message (does not crash app)
+- [x] User can specify AI CLI command in Workset creation form (text input field)
+- [x] User activates Workset → terminal automatically runs `cd <project_folder> && <ai_cli_command>`
+- [x] User sees AI CLI output in terminal (e.g., Claude Code welcome message, prompt)
+- [x] User can interact with AI CLI immediately (no manual command typing required)
+- [x] User can edit AI CLI command in Workset settings (change command, save, re-activate Workset)
+- [x] If AI CLI command fails (e.g., command not found), terminal shows error message (does not crash app)
 
 **PRD Mapping**: MUST-8
 
@@ -255,13 +255,13 @@ Detect SSH connection drops and attempt automatic reconnection. Features:
 Auto-reconnect is handled by SSH Connection Manager in Rust Core.
 
 **Done Criteria**:
-- [ ] User's SSH connection drops (simulate by killing SSH server or blocking network) → app detects drop within 10 seconds
-- [ ] App automatically attempts reconnection (max 3 retries, 5-second intervals)
-- [ ] User sees "Reconnecting... (1/3)" message in terminal pane during reconnection
-- [ ] Reconnection succeeds → terminal prompt reappears, user can continue working
-- [ ] Reconnection fails after 3 retries → user sees "Connection lost. Click to reconnect manually." with reconnect button
-- [ ] User clicks manual reconnect button → app attempts new connection
-- [ ] Auto-reconnect success rate ≥90% in network interruption tests (NFR-8)
+- [x] User's SSH connection drops (simulate by killing SSH server or blocking network) → app detects drop within 10 seconds
+- [x] App automatically attempts reconnection (max 3 retries, 5-second intervals)
+- [x] User sees "Reconnecting... (1/3)" message in terminal pane during reconnection
+- [x] Reconnection succeeds → terminal prompt reappears, user can continue working
+- [x] Reconnection fails after 3 retries → user sees "Connection lost. Click to reconnect manually." with reconnect button
+- [x] User clicks manual reconnect button → app attempts new connection
+- [x] Auto-reconnect success rate ≥90% in network interruption tests (NFR-8)
 
 **PRD Mapping**: MUST-2 (SSH Connection Management), NFR-8 (Auto-Reconnect Success Rate)
 
@@ -284,12 +284,12 @@ Toggle between dark mode and light mode themes. Theme applies to:
 Theme preference is saved in app settings and persists across sessions.
 
 **Done Criteria**:
-- [ ] User can toggle theme via settings menu (Dark/Light toggle switch)
-- [ ] Dark theme: Dark backgrounds, light text (e.g., #1e1e1e background, #d4d4d4 text)
-- [ ] Light theme: Light backgrounds, dark text (e.g., #ffffff background, #333333 text)
-- [ ] Theme applies to all UI components (terminal, file browser, markdown viewer, sidebar, status bar)
-- [ ] Theme preference persists across app restarts (saved in config file)
-- [ ] Theme change takes effect immediately (no app restart required)
+- [x] User can toggle theme via settings menu (Dark/Light toggle switch)
+- [x] Dark theme: Dark backgrounds, light text (e.g., #1e1e1e background, #d4d4d4 text)
+- [x] Light theme: Light backgrounds, dark text (e.g., #ffffff background, #333333 text)
+- [x] Theme applies to all UI components (terminal, file browser, markdown viewer, sidebar, status bar)
+- [x] Theme preference persists across app restarts (saved in config file)
+- [x] Theme change takes effect immediately (no app restart required)
 
 **PRD Mapping**: SHOULD-1 (promoted to MUST for MVP to improve usability)
 
@@ -852,112 +852,112 @@ Theme preference is saved in app settings and persists across sessions.
 
 ### AC-1: Workset CRUD Operations
 
-- [ ] User can create new Workset with all required fields (SSH host, port, user, auth method, project path, AI CLI command, grid layout)
-- [ ] User can save Workset to disk (JSON file exists in `~/.config/multivm-workspace/worksets/`)
-- [ ] User can view list of saved Worksets in sidebar (search/filter works)
-- [ ] User can edit existing Workset (modify fields, save changes)
-- [ ] User can delete Workset (confirmation dialog appears, file deleted from disk)
-- [ ] User can activate Workset (SSH connection established, AI CLI launched, grid layout restored)
-- [ ] App restart preserves all saved Worksets (JSON files persist)
+- [x] User can create new Workset with all required fields (SSH host, port, user, auth method, project path, AI CLI command, grid layout)
+- [x] User can save Workset to disk (JSON file exists in `~/.config/multivm-workspace/worksets/`)
+- [x] User can view list of saved Worksets in sidebar (search/filter works)
+- [x] User can edit existing Workset (modify fields, save changes)
+- [x] User can delete Workset (confirmation dialog appears, file deleted from disk)
+- [x] User can activate Workset (SSH connection established, AI CLI launched, grid layout restored)
+- [x] App restart preserves all saved Worksets (JSON files persist)
 
 ---
 
 ### AC-2: SSH Connection Methods
 
-- [ ] User can connect to VM using SSH key file path (authentication succeeds)
-- [ ] User can connect to VM using password (password stored in OS keystore)
-- [ ] User can connect to VM using `~/.ssh/config` alias (app parses config, connects successfully)
-- [ ] SSH connection survives 30+ minutes without manual keepalive
-- [ ] Connection failure shows clear error message (e.g., "Authentication failed", "Host unreachable")
+- [x] User can connect to VM using SSH key file path (authentication succeeds)
+- [x] User can connect to VM using password (password stored in OS keystore)
+- [x] User can connect to VM using `~/.ssh/config` alias (app parses config, connects successfully)
+- [x] SSH connection survives 30+ minutes without manual keepalive
+- [x] Connection failure shows clear error message (e.g., "Authentication failed", "Host unreachable")
 
 ---
 
 ### AC-3: Terminal Emulator Functionality
 
-- [ ] User can type commands, see output in real-time (e.g., `ls -la`, `echo "test"`)
-- [ ] User can run interactive TUI apps (vim, htop, nano) with full keyboard navigation
-- [ ] User can run AI CLI tools (claude-code, opencode) and see colored output
-- [ ] User can copy/paste text (Ctrl+Shift+C/V)
-- [ ] User can scroll through 10,000+ lines without UI freeze
-- [ ] Terminal displays 256-color and truecolor correctly
-- [ ] Terminal resizes when pane is resized
+- [x] User can type commands, see output in real-time (e.g., `ls -la`, `echo "test"`)
+- [x] User can run interactive TUI apps (vim, htop, nano) with full keyboard navigation
+- [x] User can run AI CLI tools (claude-code, opencode) and see colored output
+- [x] User can copy/paste text (Ctrl+Shift+C/V)
+- [x] User can scroll through 10,000+ lines without UI freeze
+- [x] Terminal displays 256-color and truecolor correctly
+- [x] Terminal resizes when pane is resized
 
 ---
 
 ### AC-4: Grid Layout Operations
 
-- [ ] User can select preset layout (1x1, 2x1, 2x2)
-- [ ] User can create custom NxM layout (e.g., 2x3)
-- [ ] User can drag pane dividers to resize panes (<50ms response)
-- [ ] User can assign content type to each pane (Terminal, File Browser, Markdown Viewer)
-- [ ] User can assign different VM connections to different panes
-- [ ] Layout state persists in Workset (saved to JSON, restored on activation)
+- [x] User can select preset layout (1x1, 2x1, 2x2)
+- [x] User can create custom NxM layout (e.g., 2x3)
+- [x] User can drag pane dividers to resize panes (<50ms response)
+- [x] User can assign content type to each pane (Terminal, File Browser, Markdown Viewer)
+- [x] User can assign different VM connections to different panes
+- [x] Layout state persists in Workset (saved to JSON, restored on activation)
 
 ---
 
 ### AC-5: File Browser Navigation
 
-- [ ] User can browse remote file system (tree view with folders and files)
-- [ ] User can expand/collapse folders
-- [ ] User can see file metadata (size, last modified)
-- [ ] User can click `.md` file → opens in Markdown Viewer
-- [ ] User can click non-`.md` file → shows "read-only" message
-- [ ] File browser updates when remote file system changes (manual refresh or auto-refresh)
+- [x] User can browse remote file system (tree view with folders and files)
+- [x] User can expand/collapse folders
+- [x] User can see file metadata (size, last modified)
+- [x] User can click `.md` file → opens in Markdown Viewer
+- [x] User can click non-`.md` file → shows "read-only" message
+- [x] File browser updates when remote file system changes (manual refresh or auto-refresh)
 
 ---
 
 ### AC-6: Markdown Viewer Rendering
 
-- [ ] User can open `.md` file from File Browser → renders in Markdown Viewer
-- [ ] Markdown rendering supports: Headers, bold, italic, lists, tables, links, code blocks
-- [ ] Code blocks have syntax highlighting
-- [ ] Markdown Viewer auto-refreshes when file changes (5-second polling)
-- [ ] User can manually refresh Markdown Viewer
+- [x] User can open `.md` file from File Browser → renders in Markdown Viewer
+- [x] Markdown rendering supports: Headers, bold, italic, lists, tables, links, code blocks
+- [x] Code blocks have syntax highlighting
+- [x] Markdown Viewer auto-refreshes when file changes (5-second polling)
+- [x] User can manually refresh Markdown Viewer
 
 ---
 
 ### AC-7: Resource Monitoring Display
 
-- [ ] User sees CPU usage % for each connected VM (updated every 5 seconds)
-- [ ] User sees RAM usage % for each connected VM (updated every 5 seconds)
-- [ ] User sees Disk usage % for each connected VM (updated every 5 seconds)
-- [ ] Resource values have color coding (green <50%, yellow 50-80%, red >80%)
-- [ ] Resource monitoring works on Ubuntu, Debian, CentOS
-- [ ] Resource monitoring gracefully fails on unsupported OS (shows "N/A")
-- [ ] Resource values are visible in global status bar while connected to one or more VMs
+- [x] User sees CPU usage % for each connected VM (updated every 5 seconds)
+- [x] User sees RAM usage % for each connected VM (updated every 5 seconds)
+- [x] User sees Disk usage % for each connected VM (updated every 5 seconds)
+- [x] Resource values have color coding (green <50%, yellow 50-80%, red >80%)
+- [x] Resource monitoring works on Ubuntu, Debian, CentOS
+- [x] Resource monitoring gracefully fails on unsupported OS (shows "N/A")
+- [x] Resource values are visible in global status bar while connected to one or more VMs
 
 ---
 
 ### AC-8: AI CLI Auto-Launch
 
-- [ ] User can specify AI CLI command in Workset creation form
-- [ ] User activates Workset → terminal automatically runs `cd <project_folder> && <ai_cli_command>`
-- [ ] User sees AI CLI output in terminal
-- [ ] User can interact with AI CLI immediately (no manual command typing)
-- [ ] User can edit AI CLI command in Workset settings
-- [ ] If AI CLI command fails, terminal shows error message (does not crash app)
+- [x] User can specify AI CLI command in Workset creation form
+- [x] User activates Workset → terminal automatically runs `cd <project_folder> && <ai_cli_command>`
+- [x] User sees AI CLI output in terminal
+- [x] User can interact with AI CLI immediately (no manual command typing)
+- [x] User can edit AI CLI command in Workset settings
+- [x] If AI CLI command fails, terminal shows error message (does not crash app)
 
 ---
 
 ### AC-9: SSH Auto-Reconnect
 
-- [ ] SSH connection drop detected within 10 seconds
-- [ ] App automatically attempts reconnection (max 3 retries within 15 seconds; retries are staggered with jitter)
-- [ ] User sees "Reconnecting... (1/3)" message during reconnection
-- [ ] Reconnection succeeds → terminal prompt reappears
-- [ ] Reconnection fails after 3 retries → user sees "Connection lost. Click to reconnect manually."
-- [ ] Auto-reconnect success rate ≥90% in network interruption tests
+- [x] SSH connection drop detected within 10 seconds
+- [x] App automatically attempts reconnection (max 3 retries within 15 seconds; retries are staggered with jitter)
+- [x] User sees "Reconnecting... (1/3)" message during reconnection
+- [x] Reconnection succeeds → terminal prompt reappears
+- [x] Reconnection fails after 3 retries → user sees "Connection lost. Click to reconnect manually."
+- [x] Auto-reconnect success rate ≥90% in network interruption tests
 
 ---
 
 ### AC-10: Dark/Light Theme
 
-- [ ] User can toggle theme via settings menu
-- [ ] Dark theme: Dark backgrounds, light text
-- [ ] Light theme: Light backgrounds, dark text
-- [ ] Theme applies to all UI components (terminal, file browser, markdown viewer, sidebar)
-- [ ] Theme preference persists across app restarts
-- [ ] Theme change takes effect immediately (no app restart required)
+- [x] User can toggle theme via settings menu
+- [x] Dark theme: Dark backgrounds, light text
+- [x] Light theme: Light backgrounds, dark text
+- [x] Theme applies to all UI components (terminal, file browser, markdown viewer, sidebar)
+- [x] Theme preference persists across app restarts
+- [x] Theme change takes effect immediately (no app restart required)
 
 ---
 
