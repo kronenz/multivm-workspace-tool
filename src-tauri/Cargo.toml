@@ -29,6 +29,10 @@ ssh2-config = "0.7"
 clap = { version = "4.5", features = ["derive"] }
 chrono = { version = "0.4.43", features = ["serde"] }
 
+[dev-dependencies]
+tauri = { version = "2.10", features = ["test"] }
+tempfile = "3"
+
 [[bin]]
 name = "spike_2_ssh_harness"
 path = "src/bin/spike_2_ssh_harness.rs"
