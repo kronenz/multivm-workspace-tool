@@ -1,6 +1,11 @@
 import { Terminal } from '@xterm/xterm';
 import { createGrid, setActivePane } from './grid.ts';
 import { createTerminal, destroyTerminal, TerminalInstance } from './terminal.ts';
+import { invoke } from '@tauri-apps/api/core';
+import { openUrl } from '@tauri-apps/plugin-opener';
+
+import { FileBrowser, type FileEntry } from './file_browser.ts';
+import { installMarkdownLinkHandler, renderMarkdownToHtml } from './markdown.ts';
 
 // ── Types ──
 
@@ -13,7 +18,11 @@ export interface PaneState {
   hostLabel: string;
   resizeObserver: ResizeObserver | null;
   outputBuffer: OutputBuffer | null;
+  contentType: PaneContentType;
+  contentEl: HTMLElement | null;
 }
+
+export type PaneContentType = 'terminal' | 'file-browser' | 'markdown';
 
 // ── Output Buffer (rAF batching) ──
 
@@ -82,6 +91,8 @@ export function createWorkspace(
       hostLabel: '',
       resizeObserver: null,
       outputBuffer: null,
+      contentType: 'terminal',
+      contentEl: null,
     };
 
     if (i < connectionCount) {
@@ -295,6 +306,7 @@ export function attachTerminal(pane: PaneState): void {
   if (pane.terminal) return;
 
   const termWrapper = document.createElement('div');
+  termWrapper.className = 'pane-terminal-wrapper';
   termWrapper.style.position = 'absolute';
   termWrapper.style.top = '24px';
   termWrapper.style.left = '0';
@@ -308,10 +320,26 @@ export function attachTerminal(pane: PaneState): void {
     <span class="pane-status-dot connecting"></span>
     <span class="pane-host-label">${escapeText(pane.hostLabel)}</span>
     <span class="pane-status-text"></span>
+    <span class="pane-status-spacer"></span>
+    <select class="pane-content-type-select">
+      <option value="terminal">Terminal</option>
+      <option value="file-browser">File Browser</option>
+      <option value="markdown">Markdown</option>
+    </select>
     <button class="btn-pane-reconnect" type="button" style="display:none;">Reconnect</button>
+    <button class="btn-pane-restart-cli" type="button" style="display:none;" title="Restart AI CLI">⟳ AI CLI</button>
   `;
   pane.container.appendChild(statusBar);
   pane.statusEl = statusBar;
+
+  const contentSelect = statusBar.querySelector<HTMLSelectElement>('.pane-content-type-select');
+  if (contentSelect) {
+    contentSelect.value = pane.contentType;
+    contentSelect.addEventListener('change', () => {
+      const next = contentSelect.value as PaneContentType;
+      switchPaneContent(pane, next);
+    });
+  }
 
   const instance = createTerminal(termWrapper);
   pane.terminal = instance;
@@ -330,10 +358,216 @@ export function attachTerminal(pane: PaneState): void {
   pane.resizeObserver = observer;
 }
 
+const paneMarkdownPath = new WeakMap<PaneState, string>();
+
+const paneRefreshTimers = new WeakMap<PaneState, number>();
+
+export function setPaneMarkdownPath(pane: PaneState, path: string): void {
+  paneMarkdownPath.set(pane, path);
+  if (pane.contentType === 'markdown') {
+    void renderMarkdownInPane(pane, path, true);
+  }
+}
+
+export function switchPaneContent(pane: PaneState, contentType: PaneContentType): void {
+  pane.contentType = contentType;
+
+  const termWrapper = pane.container.querySelector<HTMLElement>('.pane-terminal-wrapper');
+
+  if (pane.contentEl) {
+    const timer = paneRefreshTimers.get(pane);
+    if (timer !== undefined) {
+      clearInterval(timer);
+      paneRefreshTimers.delete(pane);
+    }
+    pane.contentEl.remove();
+    pane.contentEl = null;
+  }
+
+  if (contentType === 'terminal') {
+    if (termWrapper) termWrapper.style.display = '';
+    requestAnimationFrame(() => {
+      pane.terminal?.fitAddon.fit();
+    });
+    return;
+  }
+
+  if (termWrapper) termWrapper.style.display = 'none';
+
+  const content = document.createElement('div');
+  content.style.position = 'absolute';
+  content.style.top = '24px';
+  content.style.left = '0';
+  content.style.right = '0';
+  content.style.bottom = '0';
+
+  if (contentType === 'file-browser') {
+    content.className = 'pane-file-browser-content';
+    content.style.display = 'flex';
+    content.style.flexDirection = 'column';
+    content.style.padding = '0';
+    content.style.overflow = 'hidden';
+
+    content.innerHTML = `
+      <div class="pane-content-header">
+        <span class="pane-content-title">Files</span>
+        <button class="btn-pane-refresh" type="button" title="Refresh">↻</button>
+      </div>
+      <div class="pane-file-browser-tree"></div>
+    `;
+    pane.container.appendChild(content);
+    pane.contentEl = content;
+
+    const treeEl = content.querySelector<HTMLElement>('.pane-file-browser-tree');
+    if (treeEl) {
+      treeEl.style.flex = '1';
+      treeEl.style.overflow = 'auto';
+      treeEl.style.padding = '10px 12px';
+    }
+
+    const fb = new FileBrowser(
+      treeEl ?? content,
+      async (sessionId: string, path: string) => {
+        return invoke<FileEntry[]>('list_directory', { sessionId, path });
+      },
+      (path: string) => {
+        // Do not auto-switch content type.
+        setPaneMarkdownPath(pane, path);
+      },
+      (message: string, type: 'success' | 'error') => {
+        // Pane-local file browser doesn't currently surface toasts.
+        if (type === 'error') console.error(message);
+        else console.log(message);
+      },
+    );
+
+    const refreshBtn = content.querySelector<HTMLButtonElement>('.btn-pane-refresh');
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', () => {
+        void fb.refresh();
+      });
+    }
+
+    const rootPath = pane.container.dataset.rootPath ?? '.';
+    fb.setContext(pane.sessionId, pane.sessionId ? rootPath : null);
+
+    const intervalId = window.setInterval(() => {
+      void fb.refresh();
+    }, 10_000);
+    paneRefreshTimers.set(pane, intervalId);
+    return;
+  }
+
+  // Markdown viewer
+  content.className = 'pane-markdown-content markdown-viewer';
+  content.innerHTML = `
+    <div class="md-header">
+      <div style="min-width:0">
+        <div class="md-path"></div>
+        <div class="md-note"></div>
+      </div>
+      <button class="btn-pane-refresh" type="button" title="Refresh">↻</button>
+    </div>
+    <div class="markdown-body"></div>
+  `;
+  pane.container.appendChild(content);
+  pane.contentEl = content;
+
+  const mdBody = content.querySelector<HTMLElement>('.markdown-body');
+  const mdPathEl = content.querySelector<HTMLElement>('.md-path');
+  const mdNoteEl = content.querySelector<HTMLElement>('.md-note');
+
+  const refreshBtn = content.querySelector<HTMLButtonElement>('.btn-pane-refresh');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', () => {
+      const path = paneMarkdownPath.get(pane);
+      if (!path) return;
+      void renderMarkdownInPane(pane, path, true);
+    });
+  }
+
+  const intervalId = window.setInterval(() => {
+    const currentPath = paneMarkdownPath.get(pane);
+    if (!currentPath) return;
+    void renderMarkdownInPane(pane, currentPath, false);
+  }, 5_000);
+  paneRefreshTimers.set(pane, intervalId);
+
+  if (mdBody) {
+    installMarkdownLinkHandler(
+      mdBody,
+      async (url: string) => {
+        await openUrl(url);
+      },
+      () => {
+        console.warn('Not supported');
+      },
+    );
+  }
+
+  const remembered = paneMarkdownPath.get(pane);
+  if (!remembered) {
+    if (mdPathEl) mdPathEl.textContent = '';
+    if (mdNoteEl) mdNoteEl.textContent = '';
+    if (mdBody) {
+      mdBody.innerHTML = `<p class="pane-markdown-placeholder">Open a .md file from the File Browser to view it here</p>`;
+    }
+    return;
+  }
+
+  void renderMarkdownInPane(pane, remembered, true);
+}
+
+async function renderMarkdownInPane(pane: PaneState, path: string, force: boolean): Promise<void> {
+  if (pane.contentType !== 'markdown' || !pane.contentEl) return;
+
+  const mdBody = pane.contentEl.querySelector<HTMLElement>('.markdown-body');
+  const mdPathEl = pane.contentEl.querySelector<HTMLElement>('.md-path');
+  const mdNoteEl = pane.contentEl.querySelector<HTMLElement>('.md-note');
+
+  if (!mdBody || !mdPathEl || !mdNoteEl) return;
+  if (!pane.sessionId) {
+    mdBody.innerHTML = `<p class="pane-markdown-placeholder">No active session</p>`;
+    return;
+  }
+
+  try {
+    const result = await invoke<{ path: string; bytes: number[]; truncated: boolean }>('read_file', {
+      sessionId: pane.sessionId,
+      path,
+      maxBytes: 1024 * 1024,
+    });
+
+    const bytes = new Uint8Array(result.bytes);
+    const text = new TextDecoder('utf-8').decode(bytes);
+
+    mdPathEl.textContent = path;
+    mdNoteEl.textContent = result.truncated ? 'Showing first 1 MiB (truncated)' : '';
+
+    const prev = mdBody.dataset.lastText;
+    if (!force && prev === text) return;
+    mdBody.dataset.lastText = text;
+    mdBody.innerHTML = renderMarkdownToHtml(text);
+  } catch (err) {
+    mdBody.innerHTML = `<p class="pane-markdown-placeholder">Failed to read file: ${escapeText(String(err))}</p>`;
+  }
+}
+
 export function detachTerminal(pane: PaneState): void {
   if (pane.resizeObserver) {
     pane.resizeObserver.disconnect();
     pane.resizeObserver = null;
+  }
+
+  const timer = paneRefreshTimers.get(pane);
+  if (timer !== undefined) {
+    clearInterval(timer);
+    paneRefreshTimers.delete(pane);
+  }
+
+  if (pane.contentEl) {
+    pane.contentEl.remove();
+    pane.contentEl = null;
   }
 
   if (pane.terminal) {
