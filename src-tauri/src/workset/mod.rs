@@ -134,6 +134,14 @@ impl WorksetStore {
         }
     }
 
+    #[cfg(test)]
+    pub fn with_dir(dir: PathBuf) -> Self {
+        Self {
+            base_dir: Some(dir),
+            lock: Mutex::new(()),
+        }
+    }
+
     pub fn list(&self) -> Vec<WorksetSummary> {
         match self.list_result() {
             Ok(items) => items,
@@ -420,4 +428,239 @@ fn validate_grid_layout(grid_layout: &GridLayout) -> Result<(), StoreError> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::DateTime;
+    use tempfile::tempdir;
+
+    fn test_connection() -> ConnectionConfig {
+        ConnectionConfig {
+            host: "test.example.com".into(),
+            port: 22,
+            user: "testuser".into(),
+            auth_method: AuthMethod::Key,
+            key_path: Some("/home/user/.ssh/id_rsa".into()),
+            project_path: "/home/user/project".into(),
+            ai_cli_command: None,
+            keepalive_interval_secs: None,
+            reconnect_max_retries: None,
+        }
+    }
+
+    fn test_grid() -> GridLayout {
+        GridLayout {
+            preset: Some("2x2".into()),
+            rows: 2,
+            cols: 2,
+        }
+    }
+
+    fn test_input() -> CreateWorksetInput {
+        CreateWorksetInput {
+            name: "Test Workset".into(),
+            connections: vec![test_connection()],
+            grid_layout: test_grid(),
+        }
+    }
+
+    fn update_name(store: &WorksetStore, id: &str, new_name: &str) -> Result<Workset, StoreError> {
+        let _guard = store.lock_guard()?;
+        if new_name.trim().is_empty() {
+            return Err(StoreError::Validation("name must not be empty".to_string()));
+        }
+
+        let path = store.path_for_id(id)?;
+        let contents = fs::read_to_string(&path)?;
+        let mut current = serde_json::from_str::<Workset>(&contents)?;
+        current.name = new_name.to_string();
+        current.updated_at = now_iso8601();
+        store.write_workset(&current)?;
+        Ok(current)
+    }
+
+    #[test]
+    fn test_create_workset_basic() {
+        let dir = tempdir().expect("create tempdir");
+        let store = WorksetStore::with_dir(dir.path().to_path_buf());
+
+        let workset = store.create(test_input());
+        assert!(!workset.id.trim().is_empty());
+        assert_eq!(workset.name, "Test Workset");
+        assert!(!workset.created_at.trim().is_empty());
+        assert!(!workset.updated_at.trim().is_empty());
+        assert_eq!(workset.created_at, workset.updated_at);
+
+        DateTime::parse_from_rfc3339(&workset.created_at).expect("created_at is RFC3339");
+        DateTime::parse_from_rfc3339(&workset.updated_at).expect("updated_at is RFC3339");
+    }
+
+    #[test]
+    fn test_create_workset_empty_name_fails() {
+        let dir = tempdir().expect("create tempdir");
+        let store = WorksetStore::with_dir(dir.path().to_path_buf());
+
+        let mut input = test_input();
+        input.name = "".into();
+
+        let res = store.create_result(input);
+        assert!(matches!(res, Err(StoreError::Validation(_))));
+    }
+
+    #[test]
+    fn test_create_workset_no_connections_fails() {
+        let dir = tempdir().expect("create tempdir");
+        let store = WorksetStore::with_dir(dir.path().to_path_buf());
+
+        let mut input = test_input();
+        input.connections = Vec::new();
+
+        let res = store.create_result(input);
+        assert!(matches!(res, Err(StoreError::Validation(_))));
+    }
+
+    #[test]
+    fn test_create_workset_11_connections_fails() {
+        let dir = tempdir().expect("create tempdir");
+        let store = WorksetStore::with_dir(dir.path().to_path_buf());
+
+        let mut input = test_input();
+        input.connections = (0..11).map(|_| test_connection()).collect();
+
+        let res = store.create_result(input);
+        assert!(matches!(res, Err(StoreError::Validation(_))));
+    }
+
+    #[test]
+    fn test_validate_connection_empty_host_fails() {
+        let mut c = test_connection();
+        c.host = "".into();
+
+        let res = validate_connections(&[c]);
+        assert!(matches!(res, Err(StoreError::Validation(_))));
+    }
+
+    #[test]
+    fn test_validate_connection_empty_user_fails() {
+        let mut c = test_connection();
+        c.user = "".into();
+
+        let res = validate_connections(&[c]);
+        assert!(matches!(res, Err(StoreError::Validation(_))));
+    }
+
+    #[test]
+    fn test_validate_connection_key_without_keypath_fails() {
+        let mut c = test_connection();
+        c.key_path = None;
+        c.auth_method = AuthMethod::Key;
+
+        let res = validate_connections(&[c]);
+        assert!(matches!(res, Err(StoreError::Validation(_))));
+    }
+
+    #[test]
+    fn test_validate_grid_layout_zero_rows_fails() {
+        let grid = GridLayout {
+            preset: Some("2x2".into()),
+            rows: 0,
+            cols: 2,
+        };
+
+        let res = validate_grid_layout(&grid);
+        assert!(matches!(res, Err(StoreError::Validation(_))));
+    }
+
+    #[test]
+    fn test_validate_grid_layout_zero_cols_fails() {
+        let grid = GridLayout {
+            preset: Some("2x2".into()),
+            rows: 2,
+            cols: 0,
+        };
+
+        let res = validate_grid_layout(&grid);
+        assert!(matches!(res, Err(StoreError::Validation(_))));
+    }
+
+    #[test]
+    fn test_workset_store_crud_with_tempdir() {
+        let dir = tempdir().expect("create tempdir");
+        let store = WorksetStore::with_dir(dir.path().to_path_buf());
+
+        let created = store
+            .create_result(test_input())
+            .expect("create_result succeeds");
+
+        let got = store.get(&created.id).expect("get returns Some");
+        assert_eq!(got.id, created.id);
+        assert_eq!(got.name, created.name);
+        assert_eq!(got.connections.len(), 1);
+
+        let list = store.list();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, created.id);
+        assert_eq!(list[0].name, created.name);
+        assert_eq!(list[0].connection_count, 1);
+        DateTime::parse_from_rfc3339(&list[0].updated_at).expect("summary updated_at is RFC3339");
+
+        let updated = update_name(&store, &created.id, "Updated Workset")
+            .expect("manual update succeeds");
+        assert_eq!(updated.id, created.id);
+        assert_eq!(updated.name, "Updated Workset");
+
+        let list_after_update = store.list();
+        assert_eq!(list_after_update.len(), 1);
+        assert_eq!(list_after_update[0].id, created.id);
+        assert_eq!(list_after_update[0].name, "Updated Workset");
+
+        let deleted = store
+            .delete_result(&created.id)
+            .expect("delete_result succeeds");
+        assert!(deleted);
+        assert!(store.get(&created.id).is_none());
+        assert!(store.list().is_empty());
+    }
+
+    #[test]
+    fn test_update_workset_partial() {
+        let dir = tempdir().expect("create tempdir");
+        let store = WorksetStore::with_dir(dir.path().to_path_buf());
+
+        let created = store
+            .create_result(test_input())
+            .expect("create_result succeeds");
+        let original_connections = created.connections.clone();
+
+        let updated = update_name(&store, &created.id, "New Name")
+            .expect("manual update succeeds");
+
+        assert_eq!(updated.name, "New Name");
+        assert_eq!(updated.connections.len(), original_connections.len());
+        assert_eq!(updated.connections[0].host, original_connections[0].host);
+        assert_eq!(updated.connections[0].user, original_connections[0].user);
+        assert_eq!(updated.connections[0].project_path, original_connections[0].project_path);
+        assert_eq!(updated.connections[0].key_path, original_connections[0].key_path);
+    }
+
+    #[test]
+    fn test_delete_nonexistent_returns_false() {
+        let dir = tempdir().expect("create tempdir");
+        let store = WorksetStore::with_dir(dir.path().to_path_buf());
+
+        let deleted = store
+            .delete_result("does-not-exist")
+            .expect("delete_result succeeds");
+        assert!(!deleted);
+    }
+
+    #[test]
+    fn test_now_iso8601_format() {
+        let now = now_iso8601();
+        assert!(now.contains('T'));
+        assert!(now.ends_with('Z'));
+        DateTime::parse_from_rfc3339(&now).expect("now_iso8601 is RFC3339");
+    }
 }
