@@ -200,7 +200,7 @@ impl WorksetStore {
         input: UpdateWorksetInput,
     ) -> Result<Option<Workset>, StoreError> {
         let _guard = self.lock_guard()?;
-        let mut current = match self.get_result(id) {
+        let mut current = match self.read_workset(id) {
             Ok(w) => w,
             Err(StoreError::Io(e)) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e),
@@ -259,6 +259,12 @@ impl WorksetStore {
 
     fn get_result(&self, id: &str) -> Result<Workset, StoreError> {
         let _guard = self.lock_guard()?;
+        self.read_workset(id)
+    }
+
+    /// Read a workset from disk without acquiring the lock.
+    /// Caller MUST hold `self.lock` before calling this.
+    fn read_workset(&self, id: &str) -> Result<Workset, StoreError> {
         let path = self.path_for_id(id)?;
         let contents = fs::read_to_string(&path)?;
         Ok(serde_json::from_str::<Workset>(&contents)?)
@@ -467,18 +473,18 @@ mod tests {
     }
 
     fn update_name(store: &WorksetStore, id: &str, new_name: &str) -> Result<Workset, StoreError> {
-        let _guard = store.lock_guard()?;
-        if new_name.trim().is_empty() {
-            return Err(StoreError::Validation("name must not be empty".to_string()));
+        let input = UpdateWorksetInput {
+            name: Some(new_name.to_string()),
+            connections: None,
+            grid_layout: None,
+        };
+        match store.update_result(id, input)? {
+            Some(w) => Ok(w),
+            None => Err(StoreError::Io(io::Error::new(
+                io::ErrorKind::NotFound,
+                "workset not found",
+            ))),
         }
-
-        let path = store.path_for_id(id)?;
-        let contents = fs::read_to_string(&path)?;
-        let mut current = serde_json::from_str::<Workset>(&contents)?;
-        current.name = new_name.to_string();
-        current.updated_at = now_iso8601();
-        store.write_workset(&current)?;
-        Ok(current)
     }
 
     #[test]
