@@ -11,21 +11,23 @@ name = "multivm_workspace_tool_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2.5", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
-tauri-plugin-opener = "2"
+tauri = { version = "2.10", features = [] }
+tauri-plugin-opener = "2.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["time"] }
-uuid = { version = "1", features = ["v4"] }
+tokio = { version = "1.49", features = ["time"] }
+uuid = { version = "1.20", features = ["v4"] }
 dirs = "6"
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 
 # SPIKE-2: SSH stress-test harness dependencies
-ssh2 = "0.9"
-clap = { version = "4", features = ["derive"] }
-chrono = { version = "0.4", features = ["serde"] }
+ssh2 = "0.9.5"
+ssh2-config = "0.7"
+clap = { version = "4.5", features = ["derive"] }
+chrono = { version = "0.4.43", features = ["serde"] }
 
 [[bin]]
 name = "spike_2_ssh_harness"
